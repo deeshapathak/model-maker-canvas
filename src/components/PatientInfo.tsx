@@ -8,7 +8,7 @@ export const PatientInfo = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <p className="text-sm text-gray-600 mb-1">Name</p>
-            <p className="font-medium">E. Musk</p>
+            <p className="font-medium">Elon Musk</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Age</p>
@@ -16,7 +16,7 @@ export const PatientInfo = () => {
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Procedure</p>
-            <p className="font-medium">Facial Contouring</p>
+            <p className="font-medium">Rhinoplasty</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Status</p>
