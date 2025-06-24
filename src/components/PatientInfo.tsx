@@ -1,16 +1,13 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
 export const PatientInfo = () => {
-  return (
-    <Card>
+  return <Card>
       <CardHeader>
         <CardTitle className="text-lg">Patient Information</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <p className="text-sm text-gray-600 mb-1">Subject</p>
+            <p className="text-sm text-gray-600 mb-1">Name</p>
             <p className="font-medium">E. Musk</p>
           </div>
           <div>
@@ -27,6 +24,5 @@ export const PatientInfo = () => {
           </div>
         </div>
       </CardContent>
-    </Card>
-  );
+    </Card>;
 };
