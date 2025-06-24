@@ -10,20 +10,20 @@ export const PatientInfo = () => {
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <p className="text-sm text-gray-600 mb-1">Name</p>
-            <p className="font-medium">Emily Johnson</p>
+            <p className="text-sm text-gray-600 mb-1">Subject</p>
+            <p className="font-medium">E. Musk</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Age</p>
-            <p className="font-medium">28 years</p>
+            <p className="font-medium">52 years</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Procedure</p>
-            <p className="font-medium">Rhinoplasty</p>
+            <p className="font-medium">Facial Contouring</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Status</p>
-            <p className="font-medium text-green-600">Planning Phase</p>
+            <p className="font-medium text-blue-600">3D Analysis Phase</p>
           </div>
         </div>
       </CardContent>
