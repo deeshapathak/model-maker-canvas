@@ -1,38 +1,21 @@
-import { useRef, useState, Suspense, useEffect, useMemo } from "react";
-import { useFrame, useLoader, useThree } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
+import { OrbitControls, Environment, Stage } from "@react-three/drei";
+import { Suspense } from "react";
 import { useGLTF } from "@react-three/drei";
-import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2 } from "three";
+import { useRef, useState, useMemo } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Mesh, Vector3, Float32BufferAttribute, Raycaster, Vector2 } from "three";
 
-// Fallback component when GLB is loading or fails
-const FallbackSphere = ({ onClick, editingArea, deformationStrength }: { 
-  onClick: () => void;
-  editingArea?: string | null;
+interface GaussianModelViewerProps {
+  modelUrl: string;
+  sessionId?: string;
+  patientName?: string;
+  onModelLoaded?: () => void;
+  onModelError?: (error: string) => void;
   deformationStrength?: number;
-}) => {
-  const meshRef = useRef<Mesh>(null);
-  
-  useFrame((state, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y += delta * 0.1;
-    }
-  });
+}
 
-  // Apply deformation to the sphere as a test
-  const scale = editingArea === 'nose' ? 1 + deformationStrength! * 0.5 : 1;
-
-  return (
-    <mesh ref={meshRef} position={[0, 0, 0]} onClick={onClick} scale={[scale, scale, scale]}>
-      <sphereGeometry args={[1.2, 64, 64]} />
-      <meshStandardMaterial 
-        color={editingArea === 'nose' ? "#ff6b6b" : "#F5C99B"}
-        roughness={0.6} 
-        metalness={0.1}
-      />
-    </mesh>
-  );
-};
-
-// 3D Sculpting Brush System
+// 3D Sculpting Brush System - exactly like FaceModel
 const SculptingBrush = ({ 
   position, 
   strength, 
@@ -61,29 +44,22 @@ const SculptingBrush = ({
   );
 };
 
-// Deformable GLB Model Component with 3D Sculpting
-const ElonMuskModel = ({ 
-  onClick, 
-  modelPath = '/models/elon-musk.glb',
-  scale = [1, 1, 1],
-  editingArea,
-  deformationStrength = 0.1
+// Editable Gaussian Model Component
+const EditableGaussianModel = ({ 
+  modelUrl, 
+  deformationStrength = 0.1 
 }: { 
-  onClick: () => void;
-  modelPath?: string;
-  scale?: [number, number, number];
-  editingArea?: string | null;
+  modelUrl: string;
   deformationStrength?: number;
 }) => {
   const meshRef = useRef<Mesh>(null);
   const originalPositionsRef = useRef<Float32Array | null>(null);
-  const [isDeforming, setIsDeforming] = useState(false);
   const [isSculpting, setIsSculpting] = useState(false);
   const [brushPosition, setBrushPosition] = useState<Vector3>(new Vector3());
   const { camera, gl } = useThree();
 
-  // Use useGLTF directly and let Suspense handle errors
-  const scene = useGLTF(modelPath);
+  // Load the GLTF model
+  const scene = useGLTF(modelUrl);
 
   // Clone the scene to avoid modifying the original
   const clonedScene = useMemo(() => {
@@ -96,7 +72,6 @@ const ElonMuskModel = ({
             const positions = child.geometry.attributes.position;
             if (positions) {
               originalPositionsRef.current = positions.array.slice() as Float32Array;
-              console.log('Stored original positions:', originalPositionsRef.current.length);
             }
           }
         });
@@ -109,7 +84,7 @@ const ElonMuskModel = ({
     return null;
   }, [scene]);
 
-  // 3D Sculpting function - like Photoshop's liquify tool
+  // 3D Sculpting function - exactly like FaceModel
   const sculptMesh = (intersectionPoint: Vector3, strength: number, radius: number = 0.1) => {
     if (!clonedScene || !originalPositionsRef.current) return;
 
@@ -135,16 +110,13 @@ const ElonMuskModel = ({
               const falloff = 1 - (distance / radius);
               const influence = falloff * falloff; // Smooth falloff
               
-              // Apply different sculpting effects based on editing area
-              if (editingArea === 'nose') {
-                // Nose sculpting - push vertices outward
-                const direction = vertexPosition.clone().sub(intersectionPoint).normalize();
-                const pushStrength = strength * influence * 0.1;
-                
-                newPositions[i * 3] = x + direction.x * pushStrength;
-                newPositions[i * 3 + 1] = y + direction.y * pushStrength;
-                newPositions[i * 3 + 2] = z + direction.z * pushStrength;
-              }
+              // Apply sculpting - push vertices outward (same as FaceModel)
+              const direction = vertexPosition.clone().sub(intersectionPoint).normalize();
+              const pushStrength = strength * influence * 0.1; // Same multiplier as FaceModel
+              
+              newPositions[i * 3] = x + direction.x * pushStrength;
+              newPositions[i * 3 + 1] = y + direction.y * pushStrength;
+              newPositions[i * 3 + 2] = z + direction.z * pushStrength;
               
               modified = true;
             }
@@ -160,13 +132,11 @@ const ElonMuskModel = ({
     });
   };
 
-  // Mouse interaction handlers using React Three Fiber events
+  // Mouse interaction handlers - exactly like FaceModel
   const handlePointerDown = (event: any) => {
-    if (editingArea === 'nose') {
-      event.stopPropagation();
-      setIsSculpting(true);
-      handlePointerMove(event);
-    }
+    event.stopPropagation();
+    setIsSculpting(true);
+    handlePointerMove(event);
   };
 
   const handlePointerMove = (event: any) => {
@@ -198,100 +168,66 @@ const ElonMuskModel = ({
     setIsSculpting(false);
   };
 
-  useFrame((state, delta) => {
-    if (meshRef.current && !isDeforming && !isSculpting) {
-      meshRef.current.rotation.y += delta * 0.1;
-    }
-  });
-
-  useEffect(() => {
-    console.log(`Loading 3D model from: ${modelPath}`);
-    console.log('Model scene:', clonedScene);
-  }, [modelPath, clonedScene]);
-
-  // If model failed to load, show fallback with deformation
   if (!clonedScene) {
-    return (
-      <FallbackSphere 
-        onClick={onClick} 
-        editingArea={editingArea}
-        deformationStrength={deformationStrength}
-      />
-    );
+    return null;
   }
 
   return (
-    <group>
+    <>
       <primitive 
         object={clonedScene} 
-        position={[0, 0, 0]}
-        scale={scale}
-        onClick={onClick}
+        scale={[1, 1, 1]}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      
-      {/* Sculpting brush indicator */}
       <SculptingBrush 
         position={brushPosition}
         strength={deformationStrength}
         radius={0.1}
         isActive={isSculpting}
       />
-    </group>
+    </>
   );
 };
 
-interface FaceModelProps {
-  modelPath?: string;
-  scale?: [number, number, number];
-  deformationStrength?: number;
-}
-
-export const FaceModel = ({ 
-  modelPath = '/models/elon-musk.glb',
-  scale = [1, 1, 1],
+export const GaussianModelViewer = ({ 
+  modelUrl, 
+  sessionId, 
+  patientName,
+  onModelLoaded,
+  onModelError,
   deformationStrength = 0.1
-}: FaceModelProps = {}) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editingArea, setEditingArea] = useState<string | null>(null);
-
-  const handleClick = (area: string) => {
-    setEditingArea(area);
-    setIsEditing(true);
-    console.log(`Editing area: ${area}`);
-  };
-
+}: GaussianModelViewerProps) => {
   return (
-    <group>
-      {/* Elon Musk GLB Model with 3D sculpting */}
-      <Suspense fallback={<FallbackSphere onClick={() => handleClick('nose')} />}>
-        <ElonMuskModel 
-          onClick={() => handleClick('nose')} 
-          modelPath={modelPath}
-          scale={scale}
-          editingArea={editingArea}
-          deformationStrength={deformationStrength}
-        />
-      </Suspense>
-
-      {/* Editing indicator */}
-      {editingArea && (
-        <mesh position={[0, 2, 0]}>
-          <boxGeometry args={[2.5, 0.3, 0.1]} />
-          <meshStandardMaterial color="#4f46e5" />
-        </mesh>
-      )}
-
-      {/* Add floating text above the model when editing */}
-      {editingArea && (
-        <mesh position={[0, 1.8, 0]}>
-          <planeGeometry args={[2, 0.2]} />
-          <meshStandardMaterial color="#ffffff" transparent opacity={0.9} />
-        </mesh>
-      )}
-    </group>
+    <div className="h-96 lg:h-[500px] bg-gray-50 relative">
+      {/* Overlay for model editing indicators */}
+      <div className="absolute top-4 left-4 z-10">
+        <div className="bg-white px-3 py-1 rounded-full text-sm text-gray-600 shadow-sm">
+          Click and drag to rotate • Scroll to zoom • Click and drag on model to sculpt
+        </div>
+      </div>
+      
+      <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
+        <Suspense fallback={null}>
+          <Stage environment="city" intensity={0.6}>
+            <EditableGaussianModel 
+              modelUrl={modelUrl} 
+              deformationStrength={deformationStrength}
+            />
+          </Stage>
+          <Environment preset="studio" />
+          <OrbitControls 
+            enablePan={true} 
+            enableZoom={true} 
+            enableRotate={true}
+            minDistance={0.5}
+            maxDistance={20}
+            zoomSpeed={1.2}
+          />
+        </Suspense>
+      </Canvas>
+    </div>
   );
 };
