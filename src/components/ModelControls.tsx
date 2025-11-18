@@ -8,15 +8,13 @@ interface ModelControlsProps {
   deformationStrength?: number;
   onSaveModel?: () => void;
   isModelSaved?: boolean;
-  modelType?: 'default' | 'gaussian';
 }
 
 export const ModelControls = ({ 
   onDeformationStrengthChange,
   deformationStrength = 0.1,
   onSaveModel,
-  isModelSaved = false,
-  modelType = 'default'
+  isModelSaved = false
 }: ModelControlsProps = {}) => {
   const [intensity, setIntensity] = useState([Math.round(deformationStrength * 100)]);
   const [selectedTool, setSelectedTool] = useState("sculpt");
@@ -96,18 +94,12 @@ export const ModelControls = ({
         </div>
         
         <div className="text-xs text-gray-500">
-          💡 Click "Sculpt" tool, then click and drag on the {modelType === 'gaussian' ? 'face' : 'nose'} to reshape it. Adjust brush strength to control the effect intensity.
+          💡 Click "Sculpt" tool, then click and drag on the nose to reshape it. Adjust brush strength to control the effect intensity.
         </div>
 
         {isModelSaved && (
           <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
             ✅ Model saved successfully! Check the healing previews to see the recovery progression.
-          </div>
-        )}
-
-        {!isModelSaved && modelType === 'gaussian' && (
-          <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
-            💡 Use the sculpting tools to edit the Gaussian Splatting model, then click "Save Model" to unlock healing previews and AI surgical recommendations.
           </div>
         )}
       </div>
