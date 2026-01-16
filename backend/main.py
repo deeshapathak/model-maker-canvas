@@ -75,15 +75,17 @@ def poisson_reconstruct(
         point_cloud, depth=poisson_depth
     )
 
-    bbox = point_cloud.get_axis_aligned_bounding_box()
-    mesh = mesh.crop(bbox)
-
     density_values = np.asarray(densities)
     if density_values.size == 0:
         raise HTTPException(status_code=500, detail="Poisson reconstruction failed.")
 
-    density_threshold = float(np.quantile(density_values, 0.01))
-    mesh.remove_vertices_by_mask(density_values < density_threshold)
+    # Remove low-density vertices BEFORE cropping to avoid vertex mask mismatch.
+    if len(density_values) == len(mesh.vertices):
+        density_threshold = float(np.quantile(density_values, 0.01))
+        mesh.remove_vertices_by_mask(density_values < density_threshold)
+
+    bbox = point_cloud.get_axis_aligned_bounding_box()
+    mesh = mesh.crop(bbox)
 
     mesh.remove_degenerate_triangles()
     mesh.remove_duplicated_triangles()
