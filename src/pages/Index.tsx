@@ -1,53 +1,42 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ModelViewer } from "@/components/ModelViewer";
 import { ModelControls } from "@/components/ModelControls";
 import { HealingPreviews } from "@/components/HealingPreviews";
 import { AIRecommendations } from "@/components/AIRecommendations";
 import { PatientInfo } from "@/components/PatientInfo";
-import { useModelFetch } from "@/hooks/useModelFetch";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, RefreshCw, Download, Upload } from "lucide-react";
+import { Loader2, Link as LinkIcon } from "lucide-react";
 import { API_CONFIG } from "@/config/api";
 
 const Index = () => {
   const [searchParams] = useSearchParams();
   const [deformationStrength, setDeformationStrength] = useState(0.1);
   const [isModelSaved, setIsModelSaved] = useState(false);
-  const [uploadedModelUrl, setUploadedModelUrl] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeModelUrl, setActiveModelUrl] = useState<string | null>(null);
+  const [scanIdInput, setScanIdInput] = useState("");
+  const [isLoadingScan, setIsLoadingScan] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   
-  // Get sessionId or scanId from URL parameters (from iOS app)
-  const sessionId = searchParams.get('sessionId');
-  const scanId = searchParams.get('scanId');
-  
-  // Fetch model from API
-  const {
-    modelUrl,
-    isLoading,
-    error,
-    fetchModel,
-  } = useModelFetch({
-    sessionId: sessionId || undefined,
-    scanId: scanId || undefined,
-    autoFetch: !!(sessionId || scanId), // Auto-fetch if sessionId or scanId is in URL
-  });
-
-  // Use fetched model URL if available, otherwise fallback to Elon Musk model
-  const currentModelPath = uploadedModelUrl || modelUrl || '/models/elon-musk.glb';
-  const isUsingAPIModel = !!modelUrl;
-  const isUsingUploadedModel = !!uploadedModelUrl;
+  const scanIdFromUrl = searchParams.get('scanId');
+  const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
+  const isUsingRemoteScan = !!activeModelUrl;
 
   useEffect(() => {
     return () => {
-      if (uploadedModelUrl) {
-        URL.revokeObjectURL(uploadedModelUrl);
+      if (activeModelUrl) {
+        URL.revokeObjectURL(activeModelUrl);
       }
     };
-  }, [uploadedModelUrl]);
+  }, [activeModelUrl]);
+
+  useEffect(() => {
+    if (scanIdFromUrl) {
+      setScanIdInput(scanIdFromUrl);
+      void loadScanById(scanIdFromUrl);
+    }
+  }, [scanIdFromUrl]);
 
   const handleDeformationStrengthChange = (strength: number) => {
     setDeformationStrength(strength);
@@ -57,53 +46,48 @@ const Index = () => {
     setIsModelSaved(true);
   };
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    setUploadError(null);
-    setIsUploading(true);
+  const loadScanFromEndpoint = async (endpoint: string) => {
+    setScanError(null);
+    setIsLoadingScan(true);
 
     try {
-      const formData = new FormData();
-      formData.append("ply", file);
-
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.PLY_TO_GLB}`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
+      const response = await fetch(endpoint);
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(detail || "PLY conversion failed.");
+        throw new Error(detail || "Unable to load scan.");
       }
 
       const blob = await response.blob();
       const nextUrl = URL.createObjectURL(blob);
-      setUploadedModelUrl((previous) => {
+      setActiveModelUrl((previous) => {
         if (previous) {
           URL.revokeObjectURL(previous);
         }
         return nextUrl;
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed.";
-      setUploadError(message);
+      const message = err instanceof Error ? err.message : "Failed to load scan.";
+      setScanError(message);
     } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      setIsLoadingScan(false);
     }
+  };
+
+  const loadLatestScan = async () => {
+    await loadScanFromEndpoint(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_LATEST_SCAN_GLB}`
+    );
+  };
+
+  const loadScanById = async (scanId: string) => {
+    if (!scanId) {
+      setScanError("Enter a scan ID first.");
+      return;
+    }
+
+    await loadScanFromEndpoint(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_SCAN_GLB(encodeURIComponent(scanId))}`
+    );
   };
 
   return (
@@ -116,14 +100,9 @@ const Index = () => {
               RHINOVATE
             </div>
             <h1 className="text-2xl font-medium text-gray-700">Dashboard</h1>
-            {isUsingAPIModel && (
-              <span className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-                Using API Model
-              </span>
-            )}
-            {isUsingUploadedModel && (
+            {isUsingRemoteScan && (
               <span className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
-                Using Uploaded Scan
+                Using Live Scan
               </span>
             )}
           </div>
@@ -135,107 +114,69 @@ const Index = () => {
           {/* Left Column - 3D Model Viewer */}
           <div className="lg:col-span-2">
             <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-              {/* API Model Fetch Controls */}
-              {!isUsingAPIModel && (
-                <div className="p-4 border-b bg-blue-50">
-                  <Card className="border-blue-200">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Download className="h-4 w-4" />
-                        Load 3D Model from API
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Fetch the latest 3D scan from your iOS app
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={fetchModel}
-                          disabled={isLoading}
-                          size="sm"
-                          className="flex-1"
-                        >
-                          {isLoading ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Loading...
-                            </>
-                          ) : (
-                            <>
-                              <RefreshCw className="h-4 w-4 mr-2" />
-                              Fetch Model
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      {error && (
-                        <p className="text-xs text-red-600 mt-2">{error}</p>
-                      )}
-                      <p className="text-xs text-gray-500 mt-2">
-                        Or add <code className="bg-gray-200 px-1 rounded">?sessionId=xxx</code> or <code className="bg-gray-200 px-1 rounded">?scanId=xxx</code> to URL
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
               <div className="p-4 border-b bg-slate-50">
                 <Card className="border-slate-200">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <Upload className="h-4 w-4" />
-                      Upload PLY Scan
+                      <LinkIcon className="h-4 w-4" />
+                      Connect iOS Scan
                     </CardTitle>
                     <CardDescription className="text-xs">
-                      Convert a TrueDepth ASCII PLY to a sculptable GLB mesh
+                      Your iOS app uploads scans to the backend and returns a scan ID. Paste it below,
+                      or load the latest scan.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex gap-2">
+                        <input
+                          value={scanIdInput}
+                          onChange={(event) => setScanIdInput(event.target.value)}
+                          placeholder="Scan ID (e.g. 8a2f...)"
+                          className="flex-1 rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        />
+                        <Button
+                          onClick={() => loadScanById(scanIdInput)}
+                          disabled={isLoadingScan}
+                          size="sm"
+                        >
+                          Load
+                        </Button>
+                      </div>
                       <Button
-                        onClick={handleUploadClick}
-                        disabled={isUploading}
+                        onClick={loadLatestScan}
+                        disabled={isLoadingScan}
                         size="sm"
-                        className="flex-1"
+                        className="w-full"
                       >
-                        {isUploading ? (
+                        {isLoadingScan ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Converting...
+                            Loading scan...
                           </>
                         ) : (
-                          <>
-                            <Upload className="h-4 w-4 mr-2" />
-                            Upload PLY Scan
-                          </>
+                          "Load Latest Scan"
                         )}
                       </Button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".ply"
-                        className="hidden"
-                        onChange={handleFileChange}
-                      />
+                      {scanError && (
+                        <p className="text-xs text-red-600">{scanError}</p>
+                      )}
+                      <p className="text-xs text-gray-500">
+                        Tip: open <code className="bg-gray-200 px-1 rounded">?scanId=&lt;id&gt;</code> to auto-load.
+                      </p>
                     </div>
-                    {uploadError && (
-                      <p className="text-xs text-red-600 mt-2">{uploadError}</p>
-                    )}
                   </CardContent>
                 </Card>
               </div>
 
-              {isLoading && !modelUrl && (
+              {isLoadingScan ? (
                 <div className="h-96 lg:h-[500px] bg-gray-50 flex items-center justify-center">
                   <div className="text-center">
                     <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-blue-500" />
-                    <p className="text-sm text-gray-600">Loading 3D model from API...</p>
+                    <p className="text-sm text-gray-600">Loading scan...</p>
                   </div>
                 </div>
-              )}
-
-              {!isLoading && (
+              ) : (
                 <ModelViewer 
                   modelPath={currentModelPath}
                   deformationStrength={deformationStrength} 

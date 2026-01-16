@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from typing import Optional
 
 import numpy as np
 import open3d as o3d
 import trimesh
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 app = FastAPI(title="Model Maker Canvas Backend")
 
@@ -20,6 +21,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+SCAN_DIR = os.path.join(tempfile.gettempdir(), "rhinovate_scans")
+SCAN_STORE: dict[str, str] = {}
+SCAN_ORDER: list[str] = []
+MAX_SCANS = 10
 
 
 def read_point_cloud_from_ply(data: bytes) -> o3d.geometry.PointCloud:
@@ -126,6 +132,25 @@ def mesh_to_glb(mesh: o3d.geometry.TriangleMesh) -> bytes:
     return trimesh.exchange.gltf.export_glb(tri_mesh)
 
 
+def store_glb(glb_bytes: bytes) -> str:
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    scan_id = uuid.uuid4().hex
+    glb_path = os.path.join(SCAN_DIR, f"{scan_id}.glb")
+    with open(glb_path, "wb") as handle:
+        handle.write(glb_bytes)
+
+    SCAN_STORE[scan_id] = glb_path
+    SCAN_ORDER.append(scan_id)
+
+    if len(SCAN_ORDER) > MAX_SCANS:
+        stale_id = SCAN_ORDER.pop(0)
+        stale_path = SCAN_STORE.pop(stale_id, None)
+        if stale_path and os.path.exists(stale_path):
+            os.remove(stale_path)
+
+    return scan_id
+
+
 @app.post("/api/ply-to-glb")
 async def ply_to_glb(
     ply: UploadFile = File(...),
@@ -150,3 +175,51 @@ async def ply_to_glb(
         media_type="model/gltf-binary",
         headers={"Content-Disposition": "attachment; filename=scan.glb"},
     )
+
+
+@app.post("/api/scans")
+async def create_scan(
+    request: Request,
+    ply: UploadFile = File(...),
+    poisson_depth: int = Query(9, ge=4, le=12),
+    target_tris: int = Query(60000, ge=1000, le=500000),
+    remove_outliers: bool = Query(False),
+) -> JSONResponse:
+    try:
+        raw_data = await ply.read()
+        point_cloud = read_point_cloud_from_ply(raw_data)
+        processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
+        mesh = poisson_reconstruct(processed, poisson_depth=poisson_depth)
+        mesh = decimate_and_finalize(mesh, target_tris=target_tris)
+        glb_bytes = mesh_to_glb(mesh)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive error handling
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}") from exc
+
+    scan_id = store_glb(glb_bytes)
+    base_url = str(request.base_url).rstrip("/")
+    glb_url = f"{base_url}/api/scans/{scan_id}.glb"
+    return JSONResponse({"scanId": scan_id, "glbUrl": glb_url})
+
+
+@app.get("/api/scans/{scan_id}.glb")
+def get_scan(scan_id: str) -> FileResponse:
+    glb_path = SCAN_STORE.get(scan_id)
+    if not glb_path or not os.path.exists(glb_path):
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    return FileResponse(
+        glb_path,
+        media_type="model/gltf-binary",
+        filename="scan.glb",
+    )
+
+
+@app.get("/api/scans/latest.glb")
+def get_latest_scan() -> FileResponse:
+    if not SCAN_ORDER:
+        raise HTTPException(status_code=404, detail="No scans available.")
+
+    latest_id = SCAN_ORDER[-1]
+    return get_scan(latest_id)
