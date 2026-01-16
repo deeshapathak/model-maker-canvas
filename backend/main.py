@@ -12,6 +12,8 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from .flame_fit import fit_flame_mesh
+
 app = FastAPI(title="Model Maker Canvas Backend")
 
 app.add_middleware(
@@ -21,6 +23,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BASE_DIR = os.path.dirname(__file__)
+ASSET_DIR = os.path.join(BASE_DIR, "assets", "flame")
+FLAME_MODEL_PATH = os.path.join(ASSET_DIR, "flame2023_Open.pkl")
+MEDIAPIPE_EMBEDDING_PATH = os.path.join(ASSET_DIR, "mediapipe_landmark_embedding.npz")
 
 SCAN_DIR = os.path.join(tempfile.gettempdir(), "rhinovate_scans")
 SCAN_STORE: dict[str, str] = {}
@@ -157,10 +164,16 @@ def process_scan(
     remove_outliers: bool,
 ) -> None:
     try:
+        if not os.path.exists(FLAME_MODEL_PATH) or not os.path.exists(MEDIAPIPE_EMBEDDING_PATH):
+            raise HTTPException(status_code=500, detail="FLAME model assets not found on server.")
+
         point_cloud = read_point_cloud_from_path(ply_path)
         processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
-        mesh = poisson_reconstruct(processed, poisson_depth=poisson_depth)
-        mesh = decimate_and_finalize(mesh, target_tris=target_tris)
+        mesh = fit_flame_mesh(
+            processed,
+            flame_model_path=FLAME_MODEL_PATH,
+            mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+        )
         glb_bytes = mesh_to_glb(mesh)
         store_glb(scan_id, glb_bytes)
         update_status(scan_id, "ready")
