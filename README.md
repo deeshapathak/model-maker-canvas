@@ -47,8 +47,8 @@ Storage & Infrastructure
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/3d-photogrammetry-scanner.git
-   cd 3d-photogrammetry-scanner
+   git clone https://github.com/deeshapathak/model-maker-canvas.git
+   cd model-maker-canvas
    ```
 
 2. **Install dependencies**
@@ -60,23 +60,19 @@ Storage & Infrastructure
    pip install -r backend/requirements.txt
    ```
 
-3. **Install photogrammetry tools** (optional)
+3. **Start the development servers**
    ```bash
-   # macOS
-   ./install_photogrammetry.sh
-   
-   # Linux
-   sudo ./install_photogrammetry.sh
-   ```
-
-4. **Start the development server**
-   ```bash
+   # Frontend + backend together
    npm run dev:full
+
+   # Or run separately:
+   # npm run dev        # frontend
+   # npm run backend    # backend
    ```
 
-5. **Open your browser**
+4. **Open your browser**
    ```
-   http://localhost:8080
+   http://localhost:5173
    ```
 
 ## 📖 Usage
@@ -133,7 +129,7 @@ Storage & Infrastructure
 ```bash
 # Development
 npm run dev              # Start frontend only
-npm run server           # Start backend only
+npm run backend          # Start backend only (FastAPI)
 npm run dev:full         # Start both frontend and backend
 
 # Testing
@@ -153,19 +149,26 @@ npm run deploy           # Deploy to Cloudflare Pages
 Create a `.env` file in the root directory:
 
 ```env
-# Backend Configuration
-PORT=3001
-NODE_ENV=development
+# Backend API base URL for frontend uploads
+VITE_API_URL=http://localhost:8000
+```
 
-# Cloudflare R2 (for production)
-R2_ACCESS_KEY=your_access_key
-R2_SECRET_KEY=your_secret_key
-R2_BUCKET=3d-models-bucket
-R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
+## 🧪 PLY → GLB API
 
-# Modal (for GPU backend)
-MODAL_TOKEN_ID=your_modal_token
-MODAL_TOKEN_SECRET=your_modal_secret
+The backend exposes a single endpoint for converting TrueDepth PLY point clouds into a triangle mesh GLB:
+
+```
+POST /api/ply-to-glb
+```
+
+**Query params**
+- `poisson_depth` (default 9)
+- `target_tris` (default 60000)
+- `remove_outliers` (default false)
+
+**cURL test**
+```bash
+curl -F "ply=@scan.ply" "http://localhost:8000/api/ply-to-glb" --output scan.glb
 ```
 
 ## 🚀 Deployment

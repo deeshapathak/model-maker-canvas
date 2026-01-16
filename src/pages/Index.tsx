@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ModelViewer } from "@/components/ModelViewer";
 import { ModelControls } from "@/components/ModelControls";
@@ -8,12 +8,17 @@ import { PatientInfo } from "@/components/PatientInfo";
 import { useModelFetch } from "@/hooks/useModelFetch";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, RefreshCw, Download } from "lucide-react";
+import { Loader2, RefreshCw, Download, Upload } from "lucide-react";
+import { API_CONFIG } from "@/config/api";
 
 const Index = () => {
   const [searchParams] = useSearchParams();
   const [deformationStrength, setDeformationStrength] = useState(0.1);
   const [isModelSaved, setIsModelSaved] = useState(false);
+  const [uploadedModelUrl, setUploadedModelUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Get sessionId or scanId from URL parameters (from iOS app)
   const sessionId = searchParams.get('sessionId');
@@ -32,8 +37,17 @@ const Index = () => {
   });
 
   // Use fetched model URL if available, otherwise fallback to Elon Musk model
-  const currentModelPath = modelUrl || '/models/elon-musk.glb';
+  const currentModelPath = uploadedModelUrl || modelUrl || '/models/elon-musk.glb';
   const isUsingAPIModel = !!modelUrl;
+  const isUsingUploadedModel = !!uploadedModelUrl;
+
+  useEffect(() => {
+    return () => {
+      if (uploadedModelUrl) {
+        URL.revokeObjectURL(uploadedModelUrl);
+      }
+    };
+  }, [uploadedModelUrl]);
 
   const handleDeformationStrengthChange = (strength: number) => {
     setDeformationStrength(strength);
@@ -41,6 +55,55 @@ const Index = () => {
 
   const handleSaveModel = () => {
     setIsModelSaved(true);
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setUploadError(null);
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("ply", file);
+
+      const response = await fetch(
+        `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.PLY_TO_GLB}`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || "PLY conversion failed.");
+      }
+
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
+      setUploadedModelUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return nextUrl;
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed.";
+      setUploadError(message);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   };
 
   return (
@@ -56,6 +119,11 @@ const Index = () => {
             {isUsingAPIModel && (
               <span className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
                 Using API Model
+              </span>
+            )}
+            {isUsingUploadedModel && (
+              <span className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+                Using Uploaded Scan
               </span>
             )}
           </div>
@@ -111,6 +179,52 @@ const Index = () => {
                   </Card>
                 </div>
               )}
+
+              <div className="p-4 border-b bg-slate-50">
+                <Card className="border-slate-200">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Upload className="h-4 w-4" />
+                      Upload PLY Scan
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Convert a TrueDepth ASCII PLY to a sculptable GLB mesh
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleUploadClick}
+                        disabled={isUploading}
+                        size="sm"
+                        className="flex-1"
+                      >
+                        {isUploading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Converting...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="h-4 w-4 mr-2" />
+                            Upload PLY Scan
+                          </>
+                        )}
+                      </Button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".ply"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                    </div>
+                    {uploadError && (
+                      <p className="text-xs text-red-600 mt-2">{uploadError}</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
 
               {isLoading && !modelUrl && (
                 <div className="h-96 lg:h-[500px] bg-gray-50 flex items-center justify-center">

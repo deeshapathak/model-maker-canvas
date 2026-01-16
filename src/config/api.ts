@@ -1,8 +1,7 @@
 // API Configuration for iOS 3D Scan App
 export const API_CONFIG = {
   // Base URL for your API endpoint
-  // Update this with your actual API endpoint
-  BASE_URL: import.meta.env.VITE_API_URL || 'https://your-api-endpoint.com',
+  BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
   
   // API endpoint paths
   ENDPOINTS: {
@@ -12,6 +11,7 @@ export const API_CONFIG = {
     GET_MODEL_BY_ID: (id: string) => `/api/v1/model/${id}`,
     // Get model by scan session ID
     GET_MODEL_BY_SESSION: (sessionId: string) => `/api/v1/model/session/${sessionId}`,
+    PLY_TO_GLB: '/api/ply-to-glb',
   },
   
   // Request options
