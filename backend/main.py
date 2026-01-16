@@ -8,7 +8,7 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 import trimesh
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -25,28 +25,21 @@ app.add_middleware(
 SCAN_DIR = os.path.join(tempfile.gettempdir(), "rhinovate_scans")
 SCAN_STORE: dict[str, str] = {}
 SCAN_ORDER: list[str] = []
+SCAN_STATUS: dict[str, dict[str, str]] = {}
 MAX_SCANS = 10
 
 
-def read_point_cloud_from_ply(data: bytes) -> o3d.geometry.PointCloud:
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty upload.")
+def read_point_cloud_from_path(ply_path: str) -> o3d.geometry.PointCloud:
+    if not os.path.exists(ply_path):
+        raise HTTPException(status_code=400, detail="PLY file not found.")
 
-    header = data[:64].lstrip().lower()
+    with open(ply_path, "rb") as handle:
+        header = handle.read(64).lstrip().lower()
+
     if not header.startswith(b"ply"):
         raise HTTPException(status_code=400, detail="File is not a valid PLY.")
 
-    tmp_path: Optional[str] = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as tmp:
-            tmp.write(data)
-            tmp_path = tmp.name
-
-        point_cloud = o3d.io.read_point_cloud(tmp_path)
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
+    point_cloud = o3d.io.read_point_cloud(ply_path)
     if point_cloud.is_empty():
         raise HTTPException(status_code=400, detail="Point cloud is empty.")
 
@@ -132,9 +125,8 @@ def mesh_to_glb(mesh: o3d.geometry.TriangleMesh) -> bytes:
     return trimesh.exchange.gltf.export_glb(tri_mesh)
 
 
-def store_glb(glb_bytes: bytes) -> str:
+def store_glb(scan_id: str, glb_bytes: bytes) -> str:
     os.makedirs(SCAN_DIR, exist_ok=True)
-    scan_id = uuid.uuid4().hex
     glb_path = os.path.join(SCAN_DIR, f"{scan_id}.glb")
     with open(glb_path, "wb") as handle:
         handle.write(glb_bytes)
@@ -149,6 +141,32 @@ def store_glb(glb_bytes: bytes) -> str:
             os.remove(stale_path)
 
     return scan_id
+
+
+def update_status(scan_id: str, state: str, message: str = "") -> None:
+    SCAN_STATUS[scan_id] = {"state": state, "message": message}
+
+
+def process_scan(
+    scan_id: str,
+    ply_path: str,
+    poisson_depth: int,
+    target_tris: int,
+    remove_outliers: bool,
+) -> None:
+    try:
+        point_cloud = read_point_cloud_from_path(ply_path)
+        processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
+        mesh = poisson_reconstruct(processed, poisson_depth=poisson_depth)
+        mesh = decimate_and_finalize(mesh, target_tris=target_tris)
+        glb_bytes = mesh_to_glb(mesh)
+        store_glb(scan_id, glb_bytes)
+        update_status(scan_id, "ready")
+    except Exception as exc:  # pragma: no cover - background errors
+        update_status(scan_id, "failed", str(exc))
+    finally:
+        if os.path.exists(ply_path):
+            os.remove(ply_path)
 
 
 @app.post("/api/ply-to-glb")
@@ -184,27 +202,53 @@ async def create_scan(
     poisson_depth: int = Query(9, ge=4, le=12),
     target_tris: int = Query(60000, ge=1000, le=500000),
     remove_outliers: bool = Query(False),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
-    try:
-        raw_data = await ply.read()
-        point_cloud = read_point_cloud_from_ply(raw_data)
-        processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
-        mesh = poisson_reconstruct(processed, poisson_depth=poisson_depth)
-        mesh = decimate_and_finalize(mesh, target_tris=target_tris)
-        glb_bytes = mesh_to_glb(mesh)
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive error handling
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}") from exc
+    raw_data = await ply.read()
+    if not raw_data:
+        raise HTTPException(status_code=400, detail="Empty upload.")
 
-    scan_id = store_glb(glb_bytes)
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    scan_id = uuid.uuid4().hex
+    ply_path = os.path.join(SCAN_DIR, f"{scan_id}.ply")
+    with open(ply_path, "wb") as handle:
+        handle.write(raw_data)
+
+    update_status(scan_id, "processing")
+    background_tasks.add_task(
+        process_scan,
+        scan_id,
+        ply_path,
+        poisson_depth,
+        target_tris,
+        remove_outliers,
+    )
+
     base_url = str(request.base_url).rstrip("/")
     glb_url = f"{base_url}/api/scans/{scan_id}.glb"
-    return JSONResponse({"scanId": scan_id, "glbUrl": glb_url})
+    status_url = f"{base_url}/api/scans/{scan_id}/status"
+    return JSONResponse(
+        {"scanId": scan_id, "glbUrl": glb_url, "statusUrl": status_url, "state": "processing"}
+    )
+
+
+@app.get("/api/scans/{scan_id}/status")
+def get_scan_status(scan_id: str) -> JSONResponse:
+    status = SCAN_STATUS.get(scan_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    return JSONResponse({"scanId": scan_id, **status})
 
 
 @app.get("/api/scans/{scan_id}.glb")
 def get_scan(scan_id: str) -> FileResponse:
+    status = SCAN_STATUS.get(scan_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if status.get("state") != "ready":
+        raise HTTPException(status_code=409, detail="Scan is still processing.")
+
     glb_path = SCAN_STORE.get(scan_id)
     if not glb_path or not os.path.exists(glb_path):
         raise HTTPException(status_code=404, detail="Scan not found.")

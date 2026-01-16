@@ -5,9 +5,7 @@ import { ModelControls } from "@/components/ModelControls";
 import { HealingPreviews } from "@/components/HealingPreviews";
 import { AIRecommendations } from "@/components/AIRecommendations";
 import { PatientInfo } from "@/components/PatientInfo";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Link as LinkIcon } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { API_CONFIG } from "@/config/api";
 
 const Index = () => {
@@ -15,9 +13,9 @@ const Index = () => {
   const [deformationStrength, setDeformationStrength] = useState(0.1);
   const [isModelSaved, setIsModelSaved] = useState(false);
   const [activeModelUrl, setActiveModelUrl] = useState<string | null>(null);
-  const [scanIdInput, setScanIdInput] = useState("");
   const [isLoadingScan, setIsLoadingScan] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<string>("Idle");
   
   const scanIdFromUrl = searchParams.get('scanId');
   const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
@@ -33,8 +31,8 @@ const Index = () => {
 
   useEffect(() => {
     if (scanIdFromUrl) {
-      setScanIdInput(scanIdFromUrl);
-      void loadScanById(scanIdFromUrl);
+      setScanStatus("Waiting for scan...");
+      void pollScanStatus(scanIdFromUrl);
     }
   }, [scanIdFromUrl]);
 
@@ -73,21 +71,54 @@ const Index = () => {
     }
   };
 
-  const loadLatestScan = async () => {
-    await loadScanFromEndpoint(
-      `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_LATEST_SCAN_GLB}`
-    );
-  };
+  const pollScanStatus = async (scanId: string) => {
+    const statusUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_SCAN_STATUS(encodeURIComponent(scanId))}`;
+    const glbUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_SCAN_GLB(encodeURIComponent(scanId))}`;
 
-  const loadScanById = async (scanId: string) => {
-    if (!scanId) {
-      setScanError("Enter a scan ID first.");
+    const poll = async () => {
+      try {
+        const response = await fetch(statusUrl);
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(detail || "Unable to check scan status.");
+        }
+
+        const status = await response.json();
+        const state = status.state || "processing";
+        if (state === "ready") {
+          setScanStatus("Scan ready. Loading model...");
+          await loadScanFromEndpoint(glbUrl);
+          setScanStatus("Scan loaded.");
+          return false;
+        }
+
+        if (state === "failed") {
+          setScanError(status.message || "Scan processing failed.");
+          setScanStatus("Scan failed.");
+          return false;
+        }
+
+        setScanStatus("Processing scan...");
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to check scan status.";
+        setScanError(message);
+        setScanStatus("Scan unavailable.");
+        return false;
+      }
+    };
+
+    const keepPolling = await poll();
+    if (!keepPolling) {
       return;
     }
 
-    await loadScanFromEndpoint(
-      `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_SCAN_GLB(encodeURIComponent(scanId))}`
-    );
+    const interval = window.setInterval(async () => {
+      const shouldContinue = await poll();
+      if (!shouldContinue) {
+        window.clearInterval(interval);
+      }
+    }, 5000);
   };
 
   return (
@@ -115,58 +146,14 @@ const Index = () => {
           <div className="lg:col-span-2">
             <div className="bg-white rounded-lg shadow-sm overflow-hidden">
               <div className="p-4 border-b bg-slate-50">
-                <Card className="border-slate-200">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <LinkIcon className="h-4 w-4" />
-                      Connect iOS Scan
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Your iOS app uploads scans to the backend and returns a scan ID. Paste it below,
-                      or load the latest scan.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col gap-3">
-                      <div className="flex gap-2">
-                        <input
-                          value={scanIdInput}
-                          onChange={(event) => setScanIdInput(event.target.value)}
-                          placeholder="Scan ID (e.g. 8a2f...)"
-                          className="flex-1 rounded-md border border-gray-200 px-3 py-2 text-sm"
-                        />
-                        <Button
-                          onClick={() => loadScanById(scanIdInput)}
-                          disabled={isLoadingScan}
-                          size="sm"
-                        >
-                          Load
-                        </Button>
-                      </div>
-                      <Button
-                        onClick={loadLatestScan}
-                        disabled={isLoadingScan}
-                        size="sm"
-                        className="w-full"
-                      >
-                        {isLoadingScan ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Loading scan...
-                          </>
-                        ) : (
-                          "Load Latest Scan"
-                        )}
-                      </Button>
-                      {scanError && (
-                        <p className="text-xs text-red-600">{scanError}</p>
-                      )}
-                      <p className="text-xs text-gray-500">
-                        Tip: open <code className="bg-gray-200 px-1 rounded">?scanId=&lt;id&gt;</code> to auto-load.
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="text-sm text-gray-600">
+                  {scanIdFromUrl
+                    ? `Scan status: ${scanStatus}`
+                    : "Waiting for iOS scan. Open this page with ?scanId=<id>."}
+                </div>
+                {scanError && (
+                  <p className="text-xs text-red-600 mt-2">{scanError}</p>
+                )}
               </div>
 
               {isLoadingScan ? (
