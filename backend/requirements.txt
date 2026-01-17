@@ -1,6 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 fastapi
 uvicorn[standard]
 python-multipart
 numpy
 open3d
 trimesh
+torch==2.2.2
+smplx==0.1.28
