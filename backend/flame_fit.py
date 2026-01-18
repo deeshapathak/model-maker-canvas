@@ -176,7 +176,7 @@ def fit_flame_mesh(
         )
         final_vertices = final_vertices.squeeze(0) * scale + translation
 
-    verts_np = final_vertices.cpu().numpy()
+    verts_np = np.asarray(final_vertices.detach().cpu().tolist(), dtype=np.float32)
     flame_mesh = o3d.geometry.TriangleMesh(
         o3d.utility.Vector3dVector(verts_np),
         o3d.utility.Vector3iVector(faces),
