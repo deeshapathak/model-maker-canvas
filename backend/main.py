@@ -253,7 +253,10 @@ def get_scan_status(scan_id: str) -> JSONResponse:
     if not status:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
-    return JSONResponse({"scanId": scan_id, **status})
+    payload = {"scanId": scan_id, **status}
+    if status.get("message"):
+        payload["detail"] = status["message"]
+    return JSONResponse(payload)
 
 
 @app.get("/api/scans/{scan_id}.glb")
