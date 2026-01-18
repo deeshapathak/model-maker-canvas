@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import tempfile
+import traceback
 import uuid
 from typing import Optional
 
@@ -32,7 +35,8 @@ MEDIAPIPE_EMBEDDING_PATH = os.path.join(ASSET_DIR, "mediapipe_landmark_embedding
 SCAN_DIR = os.path.join(tempfile.gettempdir(), "rhinovate_scans")
 SCAN_STORE: dict[str, str] = {}
 SCAN_ORDER: list[str] = []
-SCAN_STATUS: dict[str, dict[str, str]] = {}
+SCAN_STATUS: dict[str, dict[str, str | int | float]] = {}
+SCAN_LANDMARKS: dict[str, str] = {}
 MAX_SCANS = 10
 
 
@@ -148,12 +152,41 @@ def store_glb(scan_id: str, glb_bytes: bytes) -> str:
         stale_path = SCAN_STORE.pop(stale_id, None)
         if stale_path and os.path.exists(stale_path):
             os.remove(stale_path)
+        stale_landmarks = SCAN_LANDMARKS.pop(stale_id, None)
+        if stale_landmarks and os.path.exists(stale_landmarks):
+            os.remove(stale_landmarks)
 
     return scan_id
 
 
-def update_status(scan_id: str, state: str, message: str = "") -> None:
-    SCAN_STATUS[scan_id] = {"state": state, "message": message}
+def store_landmarks(scan_id: str, landmarks: np.ndarray) -> str:
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    landmark_path = os.path.join(SCAN_DIR, f"{scan_id}_landmarks.json")
+    payload = {"scanId": scan_id, "landmarks": landmarks.tolist()}
+    with open(landmark_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    SCAN_LANDMARKS[scan_id] = landmark_path
+    return scan_id
+
+
+logger = logging.getLogger("rhinovate.backend")
+
+
+def update_status(
+    scan_id: str,
+    state: str,
+    message: str = "",
+    stage: str = "",
+    progress: float | None = None,
+) -> None:
+    payload: dict[str, str | int | float] = {"state": state}
+    if message:
+        payload["message"] = message
+    if stage:
+        payload["stage"] = stage
+    if progress is not None:
+        payload["progress"] = progress
+    SCAN_STATUS[scan_id] = payload
 
 
 def process_scan(
@@ -167,17 +200,23 @@ def process_scan(
         if not os.path.exists(FLAME_MODEL_PATH) or not os.path.exists(MEDIAPIPE_EMBEDDING_PATH):
             raise HTTPException(status_code=500, detail="FLAME model assets not found on server.")
 
+        update_status(scan_id, "processing", stage="read")
         point_cloud = read_point_cloud_from_path(ply_path)
+        update_status(scan_id, "processing", stage="preprocess")
         processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
-        mesh = fit_flame_mesh(
+        update_status(scan_id, "processing", stage="fit")
+        mesh, landmarks = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
         )
+        update_status(scan_id, "processing", stage="export")
         glb_bytes = mesh_to_glb(mesh)
         store_glb(scan_id, glb_bytes)
+        store_landmarks(scan_id, landmarks)
         update_status(scan_id, "ready")
     except Exception as exc:  # pragma: no cover - background errors
+        logger.exception("Scan %s failed during processing.", scan_id)
         update_status(scan_id, "failed", str(exc))
     finally:
         if os.path.exists(ply_path):
@@ -275,6 +314,25 @@ def get_scan(scan_id: str) -> FileResponse:
         glb_path,
         media_type="model/gltf-binary",
         filename="scan.glb",
+    )
+
+
+@app.get("/api/scans/{scan_id}/landmarks")
+def get_scan_landmarks(scan_id: str) -> FileResponse:
+    status = SCAN_STATUS.get(scan_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if status.get("state") != "ready":
+        raise HTTPException(status_code=409, detail="Scan is still processing.")
+
+    landmark_path = SCAN_LANDMARKS.get(scan_id)
+    if not landmark_path or not os.path.exists(landmark_path):
+        raise HTTPException(status_code=404, detail="Landmarks not found.")
+
+    return FileResponse(
+        landmark_path,
+        media_type="application/json",
+        filename="landmarks.json",
     )
 
 

@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 from typing import Tuple
 
+import logging
 import numpy as np
 import open3d as o3d
 import torch
@@ -15,6 +16,8 @@ if VENDOR_PATH not in sys.path:
     sys.path.append(VENDOR_PATH)
 
 from flame_pytorch import FLAME  # type: ignore  # noqa: E402
+
+logger = logging.getLogger("rhinovate.backend")
 
 
 def _ensure_static_embedding(mediapipe_npz: str, output_pkl: str) -> str:
@@ -61,11 +64,29 @@ def _load_flame_model(flame_model_path: str, mediapipe_embedding_path: str) -> T
     return flame, faces
 
 
+def compute_flame_landmarks(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    mediapipe_embedding_path: str,
+) -> np.ndarray:
+    embeddings = np.load(mediapipe_embedding_path, allow_pickle=True)
+    face_indices = embeddings["lmk_face_idx"]
+    bary_coords = embeddings["lmk_b_coords"]
+
+    landmarks = np.zeros((face_indices.shape[0], 3), dtype=np.float32)
+    for i, face_idx in enumerate(face_indices):
+        face = faces[int(face_idx)]
+        v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
+        w0, w1, w2 = bary_coords[i]
+        landmarks[i] = w0 * v0 + w1 * v1 + w2 * v2
+    return landmarks
+
+
 def fit_flame_mesh(
     point_cloud: o3d.geometry.PointCloud,
     flame_model_path: str,
     mediapipe_embedding_path: str,
-) -> o3d.geometry.TriangleMesh:
+) -> tuple[o3d.geometry.TriangleMesh, np.ndarray]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
     device = torch.device("cpu")
@@ -76,6 +97,7 @@ def fit_flame_mesh(
     target_np = np.asarray(target_points.points, dtype=np.float32)
     if target_np.shape[0] < 500:
         raise ValueError("Point cloud too sparse for FLAME fitting.")
+    logger.info("FLAME fitting: target points=%s", target_np.shape[0])
 
     # Initialize FLAME parameters.
     shape_params = torch.zeros((1, 100), dtype=torch.float32, device=device, requires_grad=True)
@@ -87,7 +109,7 @@ def fit_flame_mesh(
     # Avoid torch's numpy bridge to prevent "numpy is not available" runtime errors.
     target_tensor = torch.tensor(target_np.tolist(), device=device, dtype=torch.float32)
 
-    # Initialize translation to align centroids.
+    # Initialize translation + scale to align centroids and approximate size.
     with torch.no_grad():
         vertices, _ = flame(
             shape_params=shape_params.detach(),
@@ -97,6 +119,13 @@ def fit_flame_mesh(
         source_center = vertices.mean(dim=1, keepdim=True)
         target_center = target_tensor.mean(dim=0, keepdim=True)
         translation.copy_(target_center - source_center.squeeze(0))
+        source_min, _ = vertices.min(dim=1)
+        source_max, _ = vertices.max(dim=1)
+        target_min = target_tensor.min(dim=0).values
+        target_max = target_tensor.max(dim=0).values
+        source_extent = (source_max - source_min).mean().clamp(min=1e-6)
+        target_extent = (target_max - target_min).mean().clamp(min=1e-6)
+        scale.copy_(target_extent / source_extent)
 
     optimizer = torch.optim.Adam(
         [shape_params, expression_params, pose_params, translation, scale], lr=0.01
@@ -110,7 +139,7 @@ def fit_flame_mesh(
     sample_count = 1500
     target_count = min(target_tensor.shape[0], sample_count)
 
-    for _ in range(num_iters):
+    for step in range(num_iters):
         optimizer.zero_grad()
         vertices, _ = flame(
             shape_params=shape_params,
@@ -127,8 +156,17 @@ def fit_flame_mesh(
 
         verts = verts * scale + translation
         loss = chamfer_distance(verts, tgt)
+        if not torch.isfinite(loss):
+            raise ValueError("FLAME fitting diverged (loss is NaN/Inf).")
         loss.backward()
         optimizer.step()
+        with torch.no_grad():
+            shape_params.clamp_(-3.0, 3.0)
+            expression_params.clamp_(-3.0, 3.0)
+            pose_params.clamp_(-0.5, 0.5)
+            scale.clamp_(0.5, 2.0)
+        if step % 25 == 0 or step == num_iters - 1:
+            logger.info("FLAME fitting step=%s loss=%.6f", step, float(loss.detach().cpu().item()))
 
     with torch.no_grad():
         final_vertices, _ = flame(
@@ -144,4 +182,7 @@ def fit_flame_mesh(
         o3d.utility.Vector3iVector(faces),
     )
     flame_mesh.compute_vertex_normals()
-    return flame_mesh
+    landmarks = compute_flame_landmarks(verts_np, np.asarray(faces), mediapipe_embedding_path)
+    logger.info("FLAME fitting complete: vertices=%s faces=%s",
+                len(flame_mesh.vertices), len(flame_mesh.triangles))
+    return flame_mesh, landmarks
