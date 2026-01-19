@@ -15,7 +15,10 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from .fit_types import FitConfig, FitMetrics, FitResult
 from .flame_fit import fit_flame_mesh
+from .metrics import landmark_rms_mm, nose_error_p95_mm, surface_error_metrics
+from .qc import build_qc
 from .units import normalize_units
 
 app = FastAPI(title="Model Maker Canvas Backend")
@@ -38,6 +41,7 @@ SCAN_STORE: dict[str, str] = {}
 SCAN_ORDER: list[str] = []
 SCAN_STATUS: dict[str, dict[str, str | int | float]] = {}
 SCAN_LANDMARKS: dict[str, str] = {}
+SCAN_DIAGNOSTICS: dict[str, str] = {}
 MAX_SCANS = 10
 
 
@@ -160,6 +164,9 @@ def store_glb(scan_id: str, glb_bytes: bytes) -> str:
         stale_landmarks = SCAN_LANDMARKS.pop(stale_id, None)
         if stale_landmarks and os.path.exists(stale_landmarks):
             os.remove(stale_landmarks)
+        stale_diagnostics = SCAN_DIAGNOSTICS.pop(stale_id, None)
+        if stale_diagnostics and os.path.exists(stale_diagnostics):
+            os.remove(stale_diagnostics)
 
     return scan_id
 
@@ -171,6 +178,15 @@ def store_landmarks(scan_id: str, landmarks: np.ndarray) -> str:
     with open(landmark_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
     SCAN_LANDMARKS[scan_id] = landmark_path
+    return scan_id
+
+
+def store_diagnostics(scan_id: str, diagnostics: dict) -> str:
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    diagnostics_path = os.path.join(SCAN_DIR, f"{scan_id}_diagnostics.json")
+    with open(diagnostics_path, "w", encoding="utf-8") as handle:
+        json.dump(diagnostics, handle)
+    SCAN_DIAGNOSTICS[scan_id] = diagnostics_path
     return scan_id
 
 
@@ -215,17 +231,42 @@ def process_scan(
         update_status(scan_id, "processing", stage="preprocess")
         processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
         update_status(scan_id, "processing", stage="fit")
-        mesh, landmarks, _ = fit_flame_mesh(
+        fit_config = FitConfig()
+        mesh, landmarks, stage_results = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+            fit_config=fit_config,
             max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
             max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "250")),
+        )
+        mesh_vertices = np.asarray(mesh.vertices)
+        cloud_points = np.asarray(processed.points)
+        metrics = surface_error_metrics(mesh_vertices, cloud_points)
+        metrics["nose_p95_mm"] = nose_error_p95_mm(landmarks, cloud_points)
+        metrics["landmark_rms_mm"] = landmark_rms_mm(landmarks, cloud_points)
+        metrics["units_inferred"] = unit_result.units_inferred
+        metrics["unit_scale_applied"] = unit_result.unit_scale_applied
+        metrics["nose_definition_version"] = "mp_v1_radius"
+
+        qc = build_qc(metrics, fit_config)
+        fit_result = FitResult(
+            flame_params=dict(
+                shape=[],
+                expression=[],
+                pose=[],
+                scale=1.0,
+                translation=[],
+            ),
+            stage_results=stage_results,
+            metrics=FitMetrics(**metrics),
+            qc=qc,
         )
         update_status(scan_id, "processing", stage="export")
         glb_bytes = mesh_to_glb(mesh)
         store_glb(scan_id, glb_bytes)
         store_landmarks(scan_id, landmarks)
+        store_diagnostics(scan_id, fit_result.model_dump())
         update_status(scan_id, "ready")
     except Exception as exc:  # pragma: no cover - background errors
         logger.exception("Scan %s failed during processing.", scan_id)
@@ -346,6 +387,26 @@ def get_scan_landmarks(scan_id: str) -> FileResponse:
         landmark_path,
         media_type="application/json",
         filename="landmarks.json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/scans/{scan_id}/diagnostics")
+def get_scan_diagnostics(scan_id: str) -> FileResponse:
+    status = SCAN_STATUS.get(scan_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if status.get("state") != "ready":
+        raise HTTPException(status_code=409, detail="Scan is still processing.")
+
+    diagnostics_path = SCAN_DIAGNOSTICS.get(scan_id)
+    if not diagnostics_path or not os.path.exists(diagnostics_path):
+        raise HTTPException(status_code=404, detail="Diagnostics not found.")
+
+    return FileResponse(
+        diagnostics_path,
+        media_type="application/json",
+        filename="fit_diagnostics.json",
         headers={"Cache-Control": "no-store"},
     )
 
