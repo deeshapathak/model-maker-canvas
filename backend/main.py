@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .flame_fit import fit_flame_mesh
+from .units import normalize_units
 
 app = FastAPI(title="Model Maker Canvas Backend")
 
@@ -206,8 +207,13 @@ def process_scan(
 
         update_status(scan_id, "processing", stage="read")
         point_cloud = read_point_cloud_from_path(ply_path)
+        update_status(scan_id, "processing", stage="units")
+        unit_result = normalize_units(point_cloud)
+        if unit_result.warnings:
+            update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
+
         update_status(scan_id, "processing", stage="preprocess")
-        processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
+        processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
         update_status(scan_id, "processing", stage="fit")
         mesh, landmarks = fit_flame_mesh(
             processed,
