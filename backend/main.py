@@ -314,6 +314,7 @@ def get_scan(scan_id: str) -> FileResponse:
         glb_path,
         media_type="model/gltf-binary",
         filename="scan.glb",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -333,6 +334,7 @@ def get_scan_landmarks(scan_id: str) -> FileResponse:
         landmark_path,
         media_type="application/json",
         filename="landmarks.json",
+        headers={"Cache-Control": "no-store"},
     )
 
 

@@ -85,6 +85,7 @@ def compute_flame_landmarks(
 def transfer_vertex_colors(
     mesh_vertices: np.ndarray,
     point_cloud: o3d.geometry.PointCloud,
+    k_neighbors: int = 5,
 ) -> np.ndarray:
     if not point_cloud.has_colors():
         return np.full((mesh_vertices.shape[0], 3), 0.85, dtype=np.float32)
@@ -97,8 +98,8 @@ def transfer_vertex_colors(
     kdtree = o3d.geometry.KDTreeFlann(point_cloud)
     colors = np.zeros((mesh_vertices.shape[0], 3), dtype=np.float32)
     for i, vertex in enumerate(mesh_vertices):
-        _, idx, _ = kdtree.search_knn_vector_3d(vertex, 1)
-        colors[i] = cloud_colors[idx[0]]
+        _, idx, _ = kdtree.search_knn_vector_3d(vertex, k_neighbors)
+        colors[i] = cloud_colors[idx].mean(axis=0)
     return colors
 
 
