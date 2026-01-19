@@ -163,8 +163,8 @@ def fit_flame_mesh(
         estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50),
     )
-    rigid_R = torch.from_numpy(icp.transformation[:3, :3]).to(device=device, dtype=torch.float32)
-    rigid_t = torch.from_numpy(icp.transformation[:3, 3]).to(device=device, dtype=torch.float32)
+    rigid_R = torch.tensor(icp.transformation[:3, :3].tolist(), device=device, dtype=torch.float32)
+    rigid_t = torch.tensor(icp.transformation[:3, 3].tolist(), device=device, dtype=torch.float32)
 
     optimizer = torch.optim.Adam(
         [shape_params, expression_params, pose_params, translation, scale], lr=0.01
