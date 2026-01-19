@@ -149,7 +149,7 @@ def fit_flame_mesh(
         scale.copy_(target_extent / source_extent)
 
     # Rigid ICP alignment for rotation initialization.
-    neutral_vertices = vertices.squeeze(0).cpu().numpy()
+    neutral_vertices = np.asarray(vertices.squeeze(0).detach().cpu().tolist(), dtype=np.float32)
     source_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(neutral_vertices))
     source_cloud = source_cloud.voxel_down_sample(voxel_size=0.005)
     target_down = target_points.voxel_down_sample(voxel_size=0.005)
