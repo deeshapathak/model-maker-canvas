@@ -356,6 +356,18 @@ def get_scan_status(scan_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
     payload = {"scanId": scan_id, **status}
+    if status.get("state") == "ready":
+        diagnostics_path = SCAN_DIAGNOSTICS.get(scan_id)
+        if diagnostics_path and os.path.exists(diagnostics_path):
+            try:
+                with open(diagnostics_path, "r", encoding="utf-8") as handle:
+                    diagnostics = json.load(handle)
+                qc = diagnostics.get("qc", {})
+                payload["qc_pass"] = qc.get("pass_fit")
+                payload["confidence"] = qc.get("confidence")
+                payload["warnings"] = qc.get("warnings")
+            except Exception:
+                pass
     if status.get("message"):
         payload["detail"] = status["message"]
     return JSONResponse(payload)

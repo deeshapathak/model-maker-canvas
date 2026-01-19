@@ -16,6 +16,7 @@ const Index = () => {
   const [isLoadingScan, setIsLoadingScan] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<string>("Idle");
+  const [qcWarning, setQcWarning] = useState<string | null>(null);
   
   const scanIdFromUrl = searchParams.get('scanId');
   const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
@@ -86,6 +87,12 @@ const Index = () => {
         const status = await response.json();
         const state = status.state || "processing";
         if (state === "ready") {
+          if (status.qc_pass === false) {
+            const warnings = Array.isArray(status.warnings) ? status.warnings.join(", ") : "Low confidence fit";
+            setQcWarning(`Low confidence fit: ${warnings}`);
+          } else {
+            setQcWarning(null);
+          }
           setScanStatus("Scan ready. Loading model...");
           await loadScanFromEndpoint(glbUrl);
           setScanStatus("Scan loaded.");
@@ -95,15 +102,18 @@ const Index = () => {
         if (state === "failed") {
           setScanError(status.message || "Scan processing failed.");
           setScanStatus("Scan failed.");
+          setQcWarning(null);
           return false;
         }
 
         setScanStatus("Processing scan...");
+        setQcWarning(null);
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to check scan status.";
         setScanError(message);
         setScanStatus("Scan unavailable.");
+        setQcWarning(null);
         return false;
       }
     };
@@ -151,6 +161,9 @@ const Index = () => {
                     ? `Scan status: ${scanStatus}`
                     : "Waiting for iOS scan. Open this page with ?scanId=<id>."}
                 </div>
+                {qcWarning && (
+                  <p className="text-xs text-amber-600 mt-2">{qcWarning}</p>
+                )}
                 {scanError && (
                   <p className="text-xs text-red-600 mt-2">{scanError}</p>
                 )}
