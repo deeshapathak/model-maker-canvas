@@ -230,7 +230,11 @@ def process_scan(
             update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
 
         update_status(scan_id, "processing", stage="preprocess")
+        raw_points = np.asarray(unit_result.point_cloud.points)
+        logger.info("Scan %s raw points=%s", scan_id, raw_points.shape[0])
         processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
+        processed_points = np.asarray(processed.points)
+        logger.info("Scan %s processed points=%s", scan_id, processed_points.shape[0])
         update_status(scan_id, "processing", stage="fit")
         fit_config = FitConfig()
         mesh, landmarks, stage_results = fit_flame_mesh(
