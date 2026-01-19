@@ -148,6 +148,24 @@ def fit_flame_mesh(
         target_extent = (target_max - target_min).mean().clamp(min=1e-6)
         scale.copy_(target_extent / source_extent)
 
+    # Rigid ICP alignment for rotation initialization.
+    neutral_vertices = vertices.squeeze(0).cpu().numpy()
+    source_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(neutral_vertices))
+    source_cloud = source_cloud.voxel_down_sample(voxel_size=0.005)
+    target_down = target_points.voxel_down_sample(voxel_size=0.005)
+    source_cloud.estimate_normals()
+    target_down.estimate_normals()
+    icp = o3d.pipelines.registration.registration_icp(
+        source_cloud,
+        target_down,
+        max_correspondence_distance=0.02,
+        init=np.eye(4),
+        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+        criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50),
+    )
+    rigid_R = torch.from_numpy(icp.transformation[:3, :3]).to(device=device, dtype=torch.float32)
+    rigid_t = torch.from_numpy(icp.transformation[:3, 3]).to(device=device, dtype=torch.float32)
+
     optimizer = torch.optim.Adam(
         [shape_params, expression_params, pose_params, translation, scale], lr=0.01
     )
@@ -156,8 +174,8 @@ def fit_flame_mesh(
         distances = torch.cdist(a, b)
         return distances.min(dim=1).values.mean() + distances.min(dim=0).values.mean()
 
-    num_iters = 200
-    sample_count = 1500
+    num_iters = 400
+    sample_count = 3000
     target_count = min(target_tensor.shape[0], sample_count)
 
     for step in range(num_iters):
@@ -175,16 +193,23 @@ def fit_flame_mesh(
         tgt_idx = torch.randperm(target_tensor.shape[0], device=device)[:target_count]
         tgt = target_tensor[tgt_idx]
 
+        verts = verts @ rigid_R.T + rigid_t
         verts = verts * scale + translation
         loss = chamfer_distance(verts, tgt)
+        reg = (
+            shape_params.pow(2).mean()
+            + expression_params.pow(2).mean()
+            + pose_params.pow(2).mean()
+        )
+        loss = loss + 0.0005 * reg
         if not torch.isfinite(loss):
             raise ValueError("FLAME fitting diverged (loss is NaN/Inf).")
         loss.backward()
         optimizer.step()
         with torch.no_grad():
-            shape_params.clamp_(-3.0, 3.0)
-            expression_params.clamp_(-3.0, 3.0)
-            pose_params.clamp_(-0.5, 0.5)
+            shape_params.clamp_(-4.0, 4.0)
+            expression_params.clamp_(-4.0, 4.0)
+            pose_params.clamp_(-1.0, 1.0)
             scale.clamp_(0.5, 2.0)
         if step % 25 == 0 or step == num_iters - 1:
             logger.info("FLAME fitting step=%s loss=%.6f", step, float(loss.detach().cpu().item()))
@@ -195,7 +220,9 @@ def fit_flame_mesh(
             expression_params=expression_params.detach(),
             pose_params=pose_params.detach(),
         )
-        final_vertices = final_vertices.squeeze(0) * scale + translation
+        final_vertices = final_vertices.squeeze(0)
+        final_vertices = final_vertices @ rigid_R.T + rigid_t
+        final_vertices = final_vertices * scale + translation
 
     verts_np = np.asarray(final_vertices.detach().cpu().tolist(), dtype=np.float32)
     flame_mesh = o3d.geometry.TriangleMesh(

@@ -62,6 +62,10 @@ def preprocess_point_cloud(
     remove_outliers: bool,
 ) -> o3d.geometry.PointCloud:
     processed = point_cloud
+    if processed.has_colors():
+        colors = np.asarray(processed.colors)
+        if colors.size and colors.max() > 1.0:
+            processed.colors = o3d.utility.Vector3dVector(colors / 255.0)
     if remove_outliers:
         processed, _ = processed.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
 
