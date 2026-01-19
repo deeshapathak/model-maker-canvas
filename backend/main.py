@@ -88,6 +88,27 @@ def preprocess_point_cloud(
     return processed
 
 
+def pc_stats(point_cloud: o3d.geometry.PointCloud, tag: str) -> dict:
+    pts = np.asarray(point_cloud.points)
+    if pts.size == 0:
+        return {"tag": tag, "n": 0}
+    finite = np.isfinite(pts).all(axis=1)
+    pts_f = pts[finite]
+    if pts_f.shape[0] == 0:
+        return {"tag": tag, "n": int(pts.shape[0]), "finite_n": 0}
+    bbox_min = pts_f.min(axis=0)
+    bbox_max = pts_f.max(axis=0)
+    bbox = bbox_max - bbox_min
+    return {
+        "tag": tag,
+        "n": int(pts.shape[0]),
+        "finite_n": int(pts_f.shape[0]),
+        "bbox": bbox.tolist(),
+        "bbox_diag": float(np.linalg.norm(bbox)),
+        "centroid": pts_f.mean(axis=0).tolist(),
+    }
+
+
 def poisson_reconstruct(
     point_cloud: o3d.geometry.PointCloud,
     poisson_depth: int,
@@ -224,8 +245,10 @@ def process_scan(
 
         update_status(scan_id, "processing", stage="read")
         point_cloud = read_point_cloud_from_path(ply_path)
+        logger.info("Scan %s stats: %s", scan_id, pc_stats(point_cloud, "raw_ply"))
         update_status(scan_id, "processing", stage="units")
         unit_result = normalize_units(point_cloud)
+        logger.info("Scan %s stats: %s", scan_id, pc_stats(unit_result.point_cloud, "after_units"))
         if unit_result.warnings:
             update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
 
@@ -235,9 +258,10 @@ def process_scan(
         processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
         processed_points = np.asarray(processed.points)
         logger.info("Scan %s processed points=%s", scan_id, processed_points.shape[0])
+        logger.info("Scan %s stats: %s", scan_id, pc_stats(processed, "after_preprocess"))
         update_status(scan_id, "processing", stage="fit")
         fit_config = FitConfig()
-        mesh, landmarks, stage_results = fit_flame_mesh(
+        mesh, landmarks, stage_results, sparse_mode = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
@@ -255,6 +279,9 @@ def process_scan(
         metrics["nose_definition_version"] = "mp_v1_radius"
 
         qc = build_qc(metrics, fit_config)
+        if sparse_mode:
+            qc.warnings.append("POINTCLOUD_SPARSE")
+            qc.pass_fit = False
         repeatability = repeatability_check(
             processed,
             flame_model_path=FLAME_MODEL_PATH,

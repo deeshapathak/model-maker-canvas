@@ -113,7 +113,7 @@ def fit_flame_mesh(
     fit_config: FitConfig | None = None,
     max_seconds: float = 60.0,
     max_iters: int = 250,
-) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult]]:
+) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
     device = torch.device("cpu")
@@ -131,12 +131,14 @@ def fit_flame_mesh(
         )
     target_np = np.asarray(target_points.points, dtype=np.float32)
     target_normals_np = np.asarray(target_points.normals, dtype=np.float32)
+    sparse_mode = False
     if target_np.shape[0] < 200:
         raise ValueError(
             f"Point cloud too sparse for FLAME fitting (raw={raw_count}, downsampled={target_np.shape[0]})."
         )
     if target_np.shape[0] < 500:
         logger.warning("Point cloud low density for FLAME fitting: %s", target_np.shape[0])
+        sparse_mode = True
     if target_np.shape[0] > 2000:
         rng = np.random.default_rng(42)
         idx = rng.choice(target_np.shape[0], size=2000, replace=False)
@@ -322,19 +324,20 @@ def fit_flame_mesh(
         [pose_params, translation, scale],
     )
 
-    # Stage 2: expression + rigid.
-    optimize_stage(
-        "expression",
-        fit_config.iters_expr,
-        [expression_params, pose_params, translation, scale],
-    )
+    if not sparse_mode:
+        # Stage 2: expression + rigid.
+        optimize_stage(
+            "expression",
+            fit_config.iters_expr,
+            [expression_params, pose_params, translation, scale],
+        )
 
-    # Stage 3: shape + expression + rigid.
-    optimize_stage(
-        "shape",
-        fit_config.iters_shape,
-        [shape_params, expression_params, pose_params, translation, scale],
-    )
+        # Stage 3: shape + expression + rigid.
+        optimize_stage(
+            "shape",
+            fit_config.iters_shape,
+            [shape_params, expression_params, pose_params, translation, scale],
+        )
 
     with torch.no_grad():
         final_vertices, _ = flame(
@@ -357,4 +360,4 @@ def fit_flame_mesh(
     landmarks = compute_flame_landmarks(verts_np, np.asarray(faces), mediapipe_embedding_path)
     logger.info("FLAME fitting complete: vertices=%s faces=%s",
                 len(flame_mesh.vertices), len(flame_mesh.triangles))
-    return flame_mesh, landmarks, stage_results
+    return flame_mesh, landmarks, stage_results, sparse_mode
