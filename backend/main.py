@@ -19,6 +19,7 @@ from .fit_types import FitConfig, FitMetrics, FitResult
 from .flame_fit import fit_flame_mesh
 from .metrics import landmark_rms_mm, nose_error_p95_mm, surface_error_metrics
 from .qc import build_qc
+from .repeatability import repeatability_check
 from .units import normalize_units
 
 app = FastAPI(title="Model Maker Canvas Backend")
@@ -250,6 +251,15 @@ def process_scan(
         metrics["nose_definition_version"] = "mp_v1_radius"
 
         qc = build_qc(metrics, fit_config)
+        repeatability = repeatability_check(
+            processed,
+            flame_model_path=FLAME_MODEL_PATH,
+            mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+            config=fit_config,
+            runs=3,
+        )
+        metrics["repeatability_std_mm"] = repeatability
+
         fit_result = FitResult(
             flame_params=dict(
                 shape=[],
