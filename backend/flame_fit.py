@@ -208,10 +208,22 @@ def fit_flame_mesh(
             + bary_tensor[:, 2:3] * v2
         )
 
+    def nose_weights(verts: torch.Tensor, landmarks: torch.Tensor) -> torch.Tensor:
+        # Nose tip is index 1 in MediaPipe Face Mesh.
+        nose_tip = landmarks[1]
+        dists = torch.norm(verts - nose_tip, dim=1)
+        radius_m = fit_config.nose_radius_mm / 1000.0
+        weights = torch.ones_like(dists)
+        weights[dists <= radius_m] = fit_config.w_nose_multiplier
+        return weights
+
     def compute_losses(verts: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         distances = torch.cdist(verts, target_tensor)
         src_min, src_idx = distances.min(dim=1)
         tgt_min, _ = distances.min(dim=0)
+
+        lmk = compute_landmarks(verts)
+        weights = nose_weights(verts, lmk)
 
         if fit_config.trim_percentile:
             trim = fit_config.trim_percentile
@@ -220,16 +232,15 @@ def fit_flame_mesh(
             src_min = src_min[src_min <= src_thresh]
             tgt_min = tgt_min[tgt_min <= tgt_thresh]
 
-        chamfer = src_min.mean() + tgt_min.mean()
+        chamfer = (src_min * weights).mean() + tgt_min.mean()
 
         # Point-to-plane term using nearest target normals.
         tgt_nn = target_tensor[src_idx]
         tgt_normals = target_normals[src_idx]
         plane_dist = ((verts - tgt_nn) * tgt_normals).sum(dim=1)
-        point2plane = huber(plane_dist, fit_config.huber_delta).mean()
+        point2plane = (huber(plane_dist, fit_config.huber_delta) * weights).mean()
 
         # Landmark loss (landmarks to nearest point in cloud).
-        lmk = compute_landmarks(verts)
         lmk_dist = torch.cdist(lmk, target_tensor).min(dim=1).values
         landmark = huber(lmk_dist, fit_config.huber_delta).mean()
 
