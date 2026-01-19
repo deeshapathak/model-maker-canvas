@@ -82,6 +82,26 @@ def compute_flame_landmarks(
     return landmarks
 
 
+def transfer_vertex_colors(
+    mesh_vertices: np.ndarray,
+    point_cloud: o3d.geometry.PointCloud,
+) -> np.ndarray:
+    if not point_cloud.has_colors():
+        return np.full((mesh_vertices.shape[0], 3), 0.85, dtype=np.float32)
+
+    cloud_points = np.asarray(point_cloud.points)
+    cloud_colors = np.asarray(point_cloud.colors)
+    if cloud_points.size == 0 or cloud_colors.size == 0:
+        return np.full((mesh_vertices.shape[0], 3), 0.85, dtype=np.float32)
+
+    kdtree = o3d.geometry.KDTreeFlann(point_cloud)
+    colors = np.zeros((mesh_vertices.shape[0], 3), dtype=np.float32)
+    for i, vertex in enumerate(mesh_vertices):
+        _, idx, _ = kdtree.search_knn_vector_3d(vertex, 1)
+        colors[i] = cloud_colors[idx[0]]
+    return colors
+
+
 def fit_flame_mesh(
     point_cloud: o3d.geometry.PointCloud,
     flame_model_path: str,
@@ -181,6 +201,8 @@ def fit_flame_mesh(
         o3d.utility.Vector3dVector(verts_np),
         o3d.utility.Vector3iVector(faces),
     )
+    vertex_colors = transfer_vertex_colors(verts_np, point_cloud)
+    flame_mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
     flame_mesh.compute_vertex_normals()
     landmarks = compute_flame_landmarks(verts_np, np.asarray(faces), mediapipe_embedding_path)
     logger.info("FLAME fitting complete: vertices=%s faces=%s",
