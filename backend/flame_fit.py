@@ -107,6 +107,8 @@ def fit_flame_mesh(
     point_cloud: o3d.geometry.PointCloud,
     flame_model_path: str,
     mediapipe_embedding_path: str,
+    max_seconds: float = 60.0,
+    max_iters: int = 250,
 ) -> tuple[o3d.geometry.TriangleMesh, np.ndarray]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
@@ -118,6 +120,10 @@ def fit_flame_mesh(
     target_np = np.asarray(target_points.points, dtype=np.float32)
     if target_np.shape[0] < 500:
         raise ValueError("Point cloud too sparse for FLAME fitting.")
+    if target_np.shape[0] > 2000:
+        rng = np.random.default_rng(42)
+        idx = rng.choice(target_np.shape[0], size=2000, replace=False)
+        target_np = target_np[idx]
     logger.info("FLAME fitting: target points=%s", target_np.shape[0])
 
     # Initialize FLAME parameters.
@@ -174,11 +180,18 @@ def fit_flame_mesh(
         distances = torch.cdist(a, b)
         return distances.min(dim=1).values.mean() + distances.min(dim=0).values.mean()
 
-    num_iters = 400
-    sample_count = 3000
+    num_iters = min(max_iters, 200)
+    sample_count = 1200
     target_count = min(target_tensor.shape[0], sample_count)
+    best_loss = float("inf")
+    patience = 12
+    stale_steps = 0
 
+    import time
+    start_ts = time.time()
     for step in range(num_iters):
+        if time.time() - start_ts > max_seconds:
+            raise TimeoutError("FLAME fitting timed out.")
         optimizer.zero_grad()
         vertices, _ = flame(
             shape_params=shape_params,
@@ -211,8 +224,17 @@ def fit_flame_mesh(
             expression_params.clamp_(-4.0, 4.0)
             pose_params.clamp_(-1.0, 1.0)
             scale.clamp_(0.5, 2.0)
+        loss_value = float(loss.detach().cpu().item())
+        if loss_value + 1e-4 < best_loss:
+            best_loss = loss_value
+            stale_steps = 0
+        else:
+            stale_steps += 1
+            if stale_steps >= patience:
+                logger.info("FLAME fitting early stop at step=%s loss=%.6f", step, loss_value)
+                break
         if step % 25 == 0 or step == num_iters - 1:
-            logger.info("FLAME fitting step=%s loss=%.6f", step, float(loss.detach().cpu().item()))
+            logger.info("FLAME fitting step=%s loss=%.6f", step, loss_value)
 
     with torch.no_grad():
         final_vertices, _ = flame(

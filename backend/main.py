@@ -213,6 +213,8 @@ def process_scan(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+            max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
+            max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "250")),
         )
         update_status(scan_id, "processing", stage="export")
         glb_bytes = mesh_to_glb(mesh)
