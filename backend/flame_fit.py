@@ -123,8 +123,19 @@ def fit_flame_mesh(
 
     raw_points = np.asarray(point_cloud.points)
     raw_count = raw_points.shape[0]
-    # Downsample target for faster optimization.
-    target_points = point_cloud.voxel_down_sample(voxel_size=0.003)
+    raw_diag = 0.0
+    if raw_points.size:
+        raw_bbox = raw_points.max(axis=0) - raw_points.min(axis=0)
+        raw_diag = float(np.linalg.norm(raw_bbox))
+
+    # Downsample target for faster optimization, but keep raw if already sparse
+    # or if the scan collapses into a tiny bbox (unit or depth issues).
+    if raw_count < 2000 or raw_diag < 0.02:
+        logger.info("FLAME fitting: using raw points (raw=%s, diag=%.4f)", raw_count, raw_diag)
+        target_points = point_cloud
+    else:
+        voxel_size = max(0.001, raw_diag / 200.0)
+        target_points = point_cloud.voxel_down_sample(voxel_size=voxel_size)
     if not target_points.has_normals():
         target_points.estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=30)
@@ -134,7 +145,8 @@ def fit_flame_mesh(
     sparse_mode = False
     if target_np.shape[0] < 200:
         raise ValueError(
-            f"Point cloud too sparse for FLAME fitting (raw={raw_count}, downsampled={target_np.shape[0]})."
+            "Point cloud too sparse for FLAME fitting "
+            f"(raw={raw_count}, downsampled={target_np.shape[0]}, diag={raw_diag:.4f})."
         )
     if target_np.shape[0] < 500:
         logger.warning("Point cloud low density for FLAME fitting: %s", target_np.shape[0])
