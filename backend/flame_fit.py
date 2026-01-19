@@ -121,6 +121,8 @@ def fit_flame_mesh(
 
     fit_config = fit_config or FitConfig()
 
+    raw_points = np.asarray(point_cloud.points)
+    raw_count = raw_points.shape[0]
     # Downsample target for faster optimization.
     target_points = point_cloud.voxel_down_sample(voxel_size=0.003)
     if not target_points.has_normals():
@@ -130,7 +132,9 @@ def fit_flame_mesh(
     target_np = np.asarray(target_points.points, dtype=np.float32)
     target_normals_np = np.asarray(target_points.normals, dtype=np.float32)
     if target_np.shape[0] < 200:
-        raise ValueError("Point cloud too sparse for FLAME fitting.")
+        raise ValueError(
+            f"Point cloud too sparse for FLAME fitting (raw={raw_count}, downsampled={target_np.shape[0]})."
+        )
     if target_np.shape[0] < 500:
         logger.warning("Point cloud low density for FLAME fitting: %s", target_np.shape[0])
     if target_np.shape[0] > 2000:
