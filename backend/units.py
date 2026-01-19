@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import open3d as o3d
@@ -15,7 +15,7 @@ class UnitResult:
     warnings: list[str]
 
 
-def normalize_units(point_cloud: o3d.geometry.PointCloud) -> UnitResult:
+def normalize_units(point_cloud: o3d.geometry.PointCloud, override_scale: Optional[float] = None) -> UnitResult:
     points = np.asarray(point_cloud.points)
     warnings: list[str] = []
     if points.size == 0:
@@ -26,8 +26,11 @@ def normalize_units(point_cloud: o3d.geometry.PointCloud) -> UnitResult:
     extent = maxs - mins
     diag = float(np.linalg.norm(extent))
 
+    if override_scale is not None and override_scale > 0:
+        scale = override_scale
+        units_inferred = "override"
     # Heuristic: face-sized scan diag ~0.15-0.35 meters.
-    if diag > 1.0:
+    elif diag > 1.0:
         units_inferred = "millimeters"
         scale = 0.001
     elif diag < 0.02:

@@ -238,6 +238,7 @@ def process_scan(
     poisson_depth: int,
     target_tris: int,
     remove_outliers: bool,
+    unit_scale: Optional[float],
 ) -> None:
     try:
         if not os.path.exists(FLAME_MODEL_PATH) or not os.path.exists(MEDIAPIPE_EMBEDDING_PATH):
@@ -247,7 +248,7 @@ def process_scan(
         point_cloud = read_point_cloud_from_path(ply_path)
         logger.info("Scan %s stats: %s", scan_id, pc_stats(point_cloud, "raw_ply"))
         update_status(scan_id, "processing", stage="units")
-        unit_result = normalize_units(point_cloud)
+        unit_result = normalize_units(point_cloud, override_scale=unit_scale)
         logger.info("Scan %s stats: %s", scan_id, pc_stats(unit_result.point_cloud, "after_units"))
         if unit_result.warnings:
             update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
@@ -350,6 +351,7 @@ async def create_scan(
     poisson_depth: int = Query(9, ge=4, le=12),
     target_tris: int = Query(60000, ge=1000, le=500000),
     remove_outliers: bool = Query(False),
+    unit_scale: Optional[float] = Query(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
     raw_data = await ply.read()
@@ -370,6 +372,7 @@ async def create_scan(
         poisson_depth,
         target_tris,
         remove_outliers,
+        unit_scale,
     )
 
     base_url = str(request.base_url).rstrip("/")
