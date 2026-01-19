@@ -7,9 +7,12 @@ from types import SimpleNamespace
 from typing import Tuple
 
 import logging
+import time
 import numpy as np
 import open3d as o3d
 import torch
+
+from .fit_types import FitConfig, StageResult
 
 VENDOR_PATH = os.path.join(os.path.dirname(__file__), "vendor", "FLAME_PyTorch")
 if VENDOR_PATH not in sys.path:
@@ -107,17 +110,25 @@ def fit_flame_mesh(
     point_cloud: o3d.geometry.PointCloud,
     flame_model_path: str,
     mediapipe_embedding_path: str,
+    fit_config: FitConfig | None = None,
     max_seconds: float = 60.0,
     max_iters: int = 250,
-) -> tuple[o3d.geometry.TriangleMesh, np.ndarray]:
+) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult]]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
     device = torch.device("cpu")
     flame = flame.to(device)
 
+    fit_config = fit_config or FitConfig()
+
     # Downsample target for faster optimization.
     target_points = point_cloud.voxel_down_sample(voxel_size=0.004)
+    if not target_points.has_normals():
+        target_points.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=30)
+        )
     target_np = np.asarray(target_points.points, dtype=np.float32)
+    target_normals_np = np.asarray(target_points.normals, dtype=np.float32)
     if target_np.shape[0] < 500:
         raise ValueError("Point cloud too sparse for FLAME fitting.")
     if target_np.shape[0] > 2000:
@@ -135,6 +146,7 @@ def fit_flame_mesh(
 
     # Avoid torch's numpy bridge to prevent "numpy is not available" runtime errors.
     target_tensor = torch.tensor(target_np.tolist(), device=device, dtype=torch.float32)
+    target_normals = torch.tensor(target_normals_np.tolist(), device=device, dtype=torch.float32)
 
     # Initialize translation + scale to align centroids and approximate size.
     with torch.no_grad():
@@ -172,69 +184,140 @@ def fit_flame_mesh(
     rigid_R = torch.tensor(icp.transformation[:3, :3].tolist(), device=device, dtype=torch.float32)
     rigid_t = torch.tensor(icp.transformation[:3, 3].tolist(), device=device, dtype=torch.float32)
 
-    optimizer = torch.optim.Adam(
-        [shape_params, expression_params, pose_params, translation, scale], lr=0.01
+    stage_results: list[StageResult] = []
+
+    def huber(x: torch.Tensor, delta: float) -> torch.Tensor:
+        abs_x = torch.abs(x)
+        quadratic = torch.minimum(abs_x, torch.tensor(delta, device=x.device))
+        linear = abs_x - quadratic
+        return 0.5 * quadratic**2 + delta * linear
+
+    def compute_landmarks(vertices_tensor: torch.Tensor) -> torch.Tensor:
+        embeddings = np.load(mediapipe_embedding_path, allow_pickle=True)
+        face_indices = embeddings["lmk_face_idx"].tolist()
+        bary_coords = embeddings["lmk_b_coords"].tolist()
+        face_indices_tensor = torch.tensor(face_indices, device=device, dtype=torch.long)
+        bary_tensor = torch.tensor(bary_coords, device=device, dtype=torch.float32)
+        faces_tensor = torch.tensor(np.asarray(faces).tolist(), device=device, dtype=torch.long)
+        v0 = vertices_tensor[faces_tensor[face_indices_tensor, 0]]
+        v1 = vertices_tensor[faces_tensor[face_indices_tensor, 1]]
+        v2 = vertices_tensor[faces_tensor[face_indices_tensor, 2]]
+        return (
+            bary_tensor[:, 0:1] * v0
+            + bary_tensor[:, 1:2] * v1
+            + bary_tensor[:, 2:3] * v2
+        )
+
+    def compute_losses(verts: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        distances = torch.cdist(verts, target_tensor)
+        src_min, src_idx = distances.min(dim=1)
+        tgt_min, _ = distances.min(dim=0)
+
+        if fit_config.trim_percentile:
+            trim = fit_config.trim_percentile
+            src_thresh = torch.quantile(src_min, trim)
+            tgt_thresh = torch.quantile(tgt_min, trim)
+            src_min = src_min[src_min <= src_thresh]
+            tgt_min = tgt_min[tgt_min <= tgt_thresh]
+
+        chamfer = src_min.mean() + tgt_min.mean()
+
+        # Point-to-plane term using nearest target normals.
+        tgt_nn = target_tensor[src_idx]
+        tgt_normals = target_normals[src_idx]
+        plane_dist = ((verts - tgt_nn) * tgt_normals).sum(dim=1)
+        point2plane = huber(plane_dist, fit_config.huber_delta).mean()
+
+        # Landmark loss (landmarks to nearest point in cloud).
+        lmk = compute_landmarks(verts)
+        lmk_dist = torch.cdist(lmk, target_tensor).min(dim=1).values
+        landmark = huber(lmk_dist, fit_config.huber_delta).mean()
+
+        return chamfer, {
+            "chamfer": chamfer,
+            "point2plane": point2plane,
+            "landmark": landmark,
+        }
+
+    def optimize_stage(name: str, iters: int, params: list[torch.Tensor]) -> None:
+        optimizer = torch.optim.Adam(params, lr=0.01)
+        start_ts = time.time()
+        best_loss = float("inf")
+        stale_steps = 0
+
+        for step in range(min(iters, max_iters)):
+            if time.time() - start_ts > max_seconds:
+                raise TimeoutError("FLAME fitting timed out.")
+            optimizer.zero_grad()
+            vertices, _ = flame(
+                shape_params=shape_params,
+                expression_params=expression_params,
+                pose_params=pose_params,
+            )
+            verts = vertices.squeeze(0)
+
+            verts = verts @ rigid_R.T + rigid_t
+            verts = verts * scale + translation
+
+            chamfer, terms = compute_losses(verts)
+            reg = (
+                fit_config.w_prior_shape * shape_params.pow(2).mean()
+                + fit_config.w_prior_expr * expression_params.pow(2).mean()
+            )
+            loss = (
+                fit_config.w_chamfer * terms["chamfer"]
+                + fit_config.w_point2plane * terms["point2plane"]
+                + fit_config.w_landmark * terms["landmark"]
+                + reg
+            )
+
+            if not torch.isfinite(loss):
+                raise ValueError("FLAME fitting diverged (loss is NaN/Inf).")
+            loss.backward()
+            optimizer.step()
+            with torch.no_grad():
+                shape_params.clamp_(-4.0, 4.0)
+                expression_params.clamp_(-4.0, 4.0)
+                pose_params.clamp_(-1.0, 1.0)
+                scale.clamp_(0.5, 2.0)
+
+            loss_value = float(loss.detach().cpu().item())
+            if loss_value + 1e-4 < best_loss:
+                best_loss = loss_value
+                stale_steps = 0
+            else:
+                stale_steps += 1
+                if stale_steps >= 12:
+                    break
+
+        stage_results.append(
+            StageResult(
+                name=name,
+                loss=best_loss,
+                duration_ms=(time.time() - start_ts) * 1000.0,
+            )
+        )
+
+    # Stage 1: rigid only.
+    optimize_stage(
+        "rigid",
+        fit_config.iters_pose,
+        [pose_params, translation, scale],
     )
 
-    def chamfer_distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        distances = torch.cdist(a, b)
-        return distances.min(dim=1).values.mean() + distances.min(dim=0).values.mean()
+    # Stage 2: expression + rigid.
+    optimize_stage(
+        "expression",
+        fit_config.iters_expr,
+        [expression_params, pose_params, translation, scale],
+    )
 
-    num_iters = min(max_iters, 200)
-    sample_count = 1200
-    target_count = min(target_tensor.shape[0], sample_count)
-    best_loss = float("inf")
-    patience = 12
-    stale_steps = 0
-
-    import time
-    start_ts = time.time()
-    for step in range(num_iters):
-        if time.time() - start_ts > max_seconds:
-            raise TimeoutError("FLAME fitting timed out.")
-        optimizer.zero_grad()
-        vertices, _ = flame(
-            shape_params=shape_params,
-            expression_params=expression_params,
-            pose_params=pose_params,
-        )
-        verts = vertices.squeeze(0)
-        if verts.shape[0] > sample_count:
-            idx = torch.randperm(verts.shape[0], device=device)[:sample_count]
-            verts = verts[idx]
-
-        tgt_idx = torch.randperm(target_tensor.shape[0], device=device)[:target_count]
-        tgt = target_tensor[tgt_idx]
-
-        verts = verts @ rigid_R.T + rigid_t
-        verts = verts * scale + translation
-        loss = chamfer_distance(verts, tgt)
-        reg = (
-            shape_params.pow(2).mean()
-            + expression_params.pow(2).mean()
-            + pose_params.pow(2).mean()
-        )
-        loss = loss + 0.0005 * reg
-        if not torch.isfinite(loss):
-            raise ValueError("FLAME fitting diverged (loss is NaN/Inf).")
-        loss.backward()
-        optimizer.step()
-        with torch.no_grad():
-            shape_params.clamp_(-4.0, 4.0)
-            expression_params.clamp_(-4.0, 4.0)
-            pose_params.clamp_(-1.0, 1.0)
-            scale.clamp_(0.5, 2.0)
-        loss_value = float(loss.detach().cpu().item())
-        if loss_value + 1e-4 < best_loss:
-            best_loss = loss_value
-            stale_steps = 0
-        else:
-            stale_steps += 1
-            if stale_steps >= patience:
-                logger.info("FLAME fitting early stop at step=%s loss=%.6f", step, loss_value)
-                break
-        if step % 25 == 0 or step == num_iters - 1:
-            logger.info("FLAME fitting step=%s loss=%.6f", step, loss_value)
+    # Stage 3: shape + expression + rigid.
+    optimize_stage(
+        "shape",
+        fit_config.iters_shape,
+        [shape_params, expression_params, pose_params, translation, scale],
+    )
 
     with torch.no_grad():
         final_vertices, _ = flame(
@@ -257,4 +340,4 @@ def fit_flame_mesh(
     landmarks = compute_flame_landmarks(verts_np, np.asarray(faces), mediapipe_embedding_path)
     logger.info("FLAME fitting complete: vertices=%s faces=%s",
                 len(flame_mesh.vertices), len(flame_mesh.triangles))
-    return flame_mesh, landmarks
+    return flame_mesh, landmarks, stage_results

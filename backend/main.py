@@ -215,7 +215,7 @@ def process_scan(
         update_status(scan_id, "processing", stage="preprocess")
         processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
         update_status(scan_id, "processing", stage="fit")
-        mesh, landmarks = fit_flame_mesh(
+        mesh, landmarks, _ = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
