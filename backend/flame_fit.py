@@ -270,11 +270,14 @@ def fit_flame_mesh(
         lmk = compute_landmarks(verts)
         weights = nose_weights(verts, lmk)
 
+        src_mask = None
         if fit_config.trim_percentile:
             trim = fit_config.trim_percentile
             src_thresh = torch.quantile(src_min, trim)
             tgt_thresh = torch.quantile(tgt_min, trim)
-            src_min = src_min[src_min <= src_thresh]
+            src_mask = src_min <= src_thresh
+            src_min = src_min[src_mask]
+            weights = weights[src_mask]
             tgt_min = tgt_min[tgt_min <= tgt_thresh]
 
         chamfer = (src_min * weights).mean() + tgt_min.mean()
@@ -283,6 +286,8 @@ def fit_flame_mesh(
         tgt_nn = target_tensor[src_idx]
         tgt_normals = target_normals[src_idx]
         plane_dist = ((verts - tgt_nn) * tgt_normals).sum(dim=1)
+        if src_mask is not None:
+            plane_dist = plane_dist[src_mask]
         point2plane = (huber(plane_dist, fit_config.huber_delta) * weights).mean()
 
         # Landmark loss (landmarks to nearest point in cloud).
