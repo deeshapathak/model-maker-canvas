@@ -319,14 +319,18 @@ def process_scan(
         if timed_out:
             qc.warnings.append("FIT_TIMEOUT")
             qc.pass_fit = False
-        repeatability = repeatability_check(
-            processed,
-            flame_model_path=FLAME_MODEL_PATH,
-            mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
-            config=fit_config,
-            runs=3,
-        )
-        metrics["repeatability_std_mm"] = repeatability
+        repeatability_enabled = os.getenv("ENABLE_REPEATABILITY", "0") == "1"
+        if repeatability_enabled and not timed_out:
+            repeatability = repeatability_check(
+                processed,
+                flame_model_path=FLAME_MODEL_PATH,
+                mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+                config=fit_config,
+                runs=int(os.getenv("REPEATABILITY_RUNS", "2")),
+            )
+            metrics["repeatability_std_mm"] = repeatability
+        else:
+            metrics["repeatability_std_mm"] = None
 
         fit_result = FitResult(
             flame_params=dict(
