@@ -222,6 +222,30 @@ def store_diagnostics(scan_id: str, diagnostics: dict) -> str:
 logger = logging.getLogger("rhinovate.backend")
 
 
+def status_path(scan_id: str) -> str:
+    return os.path.join(SCAN_DIR, f"{scan_id}_status.json")
+
+
+def write_status_file(scan_id: str, payload: dict[str, str | int | float]) -> None:
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    with open(status_path(scan_id), "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+
+def read_status_file(scan_id: str) -> dict[str, str | int | float] | None:
+    path = status_path(scan_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict) and "state" in payload:
+            return payload
+    except Exception:
+        return None
+    return None
+
+
 def update_status(
     scan_id: str,
     state: str,
@@ -237,6 +261,7 @@ def update_status(
     if progress is not None:
         payload["progress"] = progress
     SCAN_STATUS[scan_id] = payload
+    write_status_file(scan_id, payload)
 
 
 def process_scan(
@@ -398,13 +423,17 @@ async def create_scan(
 
 @app.get("/api/scans/{scan_id}/status")
 def get_scan_status(scan_id: str) -> JSONResponse:
-    status = SCAN_STATUS.get(scan_id)
+    status = SCAN_STATUS.get(scan_id) or read_status_file(scan_id)
     if not status:
         raise HTTPException(status_code=404, detail="Scan not found.")
+    if scan_id not in SCAN_STATUS:
+        SCAN_STATUS[scan_id] = status
 
     payload = {"scanId": scan_id, **status}
     if status.get("state") == "ready":
-        diagnostics_path = SCAN_DIAGNOSTICS.get(scan_id)
+        diagnostics_path = SCAN_DIAGNOSTICS.get(scan_id) or os.path.join(
+            SCAN_DIR, f"{scan_id}_diagnostics.json"
+        )
         if diagnostics_path and os.path.exists(diagnostics_path):
             try:
                 with open(diagnostics_path, "r", encoding="utf-8") as handle:
@@ -422,13 +451,13 @@ def get_scan_status(scan_id: str) -> JSONResponse:
 
 @app.get("/api/scans/{scan_id}.glb")
 def get_scan(scan_id: str) -> FileResponse:
-    status = SCAN_STATUS.get(scan_id)
+    status = SCAN_STATUS.get(scan_id) or read_status_file(scan_id)
     if not status:
         raise HTTPException(status_code=404, detail="Scan not found.")
     if status.get("state") != "ready":
         raise HTTPException(status_code=409, detail="Scan is still processing.")
 
-    glb_path = SCAN_STORE.get(scan_id)
+    glb_path = SCAN_STORE.get(scan_id) or os.path.join(SCAN_DIR, f"{scan_id}.glb")
     if not glb_path or not os.path.exists(glb_path):
         raise HTTPException(status_code=404, detail="Scan not found.")
 
