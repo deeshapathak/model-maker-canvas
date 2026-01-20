@@ -15,7 +15,7 @@ def repeatability_check(
     nose_tip_idx = 1
     nose_positions = []
     for _ in range(runs):
-        mesh, landmarks, _ = fit_flame_mesh(
+        mesh, landmarks, *_ = fit_flame_mesh(
             point_cloud,
             flame_model_path=flame_model_path,
             mediapipe_embedding_path=mediapipe_embedding_path,
