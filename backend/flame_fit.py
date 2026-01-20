@@ -179,6 +179,7 @@ def fit_flame_mesh(
         rng = np.random.default_rng(42)
         idx = rng.choice(target_np.shape[0], size=2000, replace=False)
         target_np = target_np[idx]
+        target_normals_np = target_normals_np[idx]
     logger.info("FLAME fitting: target points=%s", target_np.shape[0])
 
     # Initialize FLAME parameters.
