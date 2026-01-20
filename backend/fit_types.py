@@ -21,6 +21,7 @@ class FitConfig(BaseModel):
     w_nose_multiplier: float = 3.0
     nose_radius_mm: float = 30.0
     nose_kNN: Optional[int] = None
+    w_mouth_multiplier: float = 2.5
 
     trim_percentile: Optional[float] = 0.98
 

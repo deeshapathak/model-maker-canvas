@@ -293,7 +293,16 @@ def fit_flame_mesh(
 
         # Landmark loss (landmarks to nearest point in cloud).
         lmk_dist = torch.cdist(lmk, target_tensor).min(dim=1).values
-        landmark = huber(lmk_dist, fit_config.huber_delta).mean()
+        mouth_indices = torch.tensor(
+            [0, 13, 14, 17, 61, 78, 308, 291],
+            device=device,
+            dtype=torch.long,
+        )
+        mouth_indices = mouth_indices[mouth_indices < lmk.shape[0]]
+        lmk_weights = torch.ones_like(lmk_dist)
+        if mouth_indices.numel() > 0:
+            lmk_weights[mouth_indices] = fit_config.w_mouth_multiplier
+        landmark = (huber(lmk_dist, fit_config.huber_delta) * lmk_weights).mean()
 
         return chamfer, {
             "chamfer": chamfer,

@@ -342,6 +342,7 @@ def process_scan(
             w_landmark=4.0,
             w_point2plane=1.0,
             w_nose_multiplier=2.0,
+            w_mouth_multiplier=3.0,
             trim_percentile=0.95,
         )
         mesh, landmarks, stage_results, sparse_mode, timed_out = fit_flame_mesh(
