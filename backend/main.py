@@ -88,6 +88,31 @@ def preprocess_point_cloud(
     return processed
 
 
+def crop_face_region(point_cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+    pts = np.asarray(point_cloud.points)
+    if pts.shape[0] < 100:
+        return point_cloud
+    x = pts[:, 0]
+    y = pts[:, 1]
+    z = pts[:, 2]
+    x_min, x_max = np.percentile(x, [5, 95])
+    y_min, y_max = np.percentile(y, [5, 95])
+    z_min = float(z.min())
+    z_max = float(z.max())
+    z_range = max(z_max - z_min, 1e-6)
+    z_cut = z_min + 0.75 * z_range  # keep closest 75% of depth
+    mask = (x >= x_min) & (x <= x_max) & (y >= y_min) & (y <= y_max) & (z <= z_cut)
+    if mask.mean() < 0.2:
+        return point_cloud
+    cropped = o3d.geometry.PointCloud()
+    cropped.points = o3d.utility.Vector3dVector(pts[mask])
+    if point_cloud.has_colors():
+        colors = np.asarray(point_cloud.colors)
+        if colors.shape[0] == pts.shape[0]:
+            cropped.colors = o3d.utility.Vector3dVector(colors[mask])
+    return cropped
+
+
 def pc_stats(point_cloud: o3d.geometry.PointCloud, tag: str) -> dict:
     pts = np.asarray(point_cloud.points)
     if pts.size == 0:
@@ -286,10 +311,15 @@ def process_scan(
         if unit_result.warnings:
             update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
 
+        update_status(scan_id, "processing", stage="crop")
+        cropped = crop_face_region(unit_result.point_cloud)
+        logger.info("Scan %s stats: %s", scan_id, pc_stats(cropped, "after_crop"))
+
         update_status(scan_id, "processing", stage="preprocess")
         raw_points = np.asarray(unit_result.point_cloud.points)
         logger.info("Scan %s raw points=%s", scan_id, raw_points.shape[0])
-        processed = preprocess_point_cloud(unit_result.point_cloud, remove_outliers=remove_outliers)
+        remove_outliers_effective = remove_outliers or os.getenv("FORCE_OUTLIER_REMOVAL", "1") == "1"
+        processed = preprocess_point_cloud(cropped, remove_outliers=remove_outliers_effective)
         processed_points = np.asarray(processed.points)
         logger.info("Scan %s processed points=%s", scan_id, processed_points.shape[0])
         logger.info("Scan %s stats: %s", scan_id, pc_stats(processed, "after_preprocess"))
