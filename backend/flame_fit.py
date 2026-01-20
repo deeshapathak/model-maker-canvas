@@ -142,11 +142,35 @@ def fit_flame_mesh(
         )
     target_np = np.asarray(target_points.points, dtype=np.float32)
     target_normals_np = np.asarray(target_points.normals, dtype=np.float32)
+    target_diag = 0.0
+    target_z_range = 0.0
+    if target_np.size:
+        target_bbox = target_np.max(axis=0) - target_np.min(axis=0)
+        target_diag = float(np.linalg.norm(target_bbox))
+        target_z_range = float(target_np[:, 2].max() - target_np[:, 2].min())
     sparse_mode = False
+    if target_diag < 0.03 or target_z_range < 0.01:
+        logger.warning(
+            "FLAME fitting collapse detected (diag=%.4f, z_range=%.4f). Using raw points.",
+            target_diag,
+            target_z_range,
+        )
+        target_points = point_cloud
+        if not target_points.has_normals():
+            target_points.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=30)
+            )
+        target_np = np.asarray(target_points.points, dtype=np.float32)
+        target_normals_np = np.asarray(target_points.normals, dtype=np.float32)
+        if target_np.size:
+            target_bbox = target_np.max(axis=0) - target_np.min(axis=0)
+            target_diag = float(np.linalg.norm(target_bbox))
+            target_z_range = float(target_np[:, 2].max() - target_np[:, 2].min())
     if target_np.shape[0] < 200:
         raise ValueError(
             "Point cloud too sparse for FLAME fitting "
-            f"(raw={raw_count}, downsampled={target_np.shape[0]}, diag={raw_diag:.4f})."
+            f"(raw={raw_count}, downsampled={target_np.shape[0]}, diag={raw_diag:.4f}, "
+            f"target_diag={target_diag:.4f}, z_range={target_z_range:.4f})."
         )
     if target_np.shape[0] < 500:
         logger.warning("Point cloud low density for FLAME fitting: %s", target_np.shape[0])

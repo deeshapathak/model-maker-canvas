@@ -15,7 +15,11 @@ class UnitResult:
     warnings: list[str]
 
 
-def normalize_units(point_cloud: o3d.geometry.PointCloud, override_scale: Optional[float] = None) -> UnitResult:
+def normalize_units(
+    point_cloud: o3d.geometry.PointCloud,
+    override_scale: Optional[float] = None,
+    override_units: Optional[str] = None,
+) -> UnitResult:
     points = np.asarray(point_cloud.points)
     warnings: list[str] = []
     if points.size == 0:
@@ -29,6 +33,9 @@ def normalize_units(point_cloud: o3d.geometry.PointCloud, override_scale: Option
     if override_scale is not None and override_scale > 0:
         scale = override_scale
         units_inferred = "override"
+    elif override_units in {"meters", "millimeters"}:
+        units_inferred = override_units
+        scale = 0.001 if override_units == "millimeters" else 1.0
     # Heuristic: face-sized scan diag ~0.15-0.35 meters.
     elif diag > 1.0:
         units_inferred = "millimeters"

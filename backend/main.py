@@ -99,12 +99,19 @@ def pc_stats(point_cloud: o3d.geometry.PointCloud, tag: str) -> dict:
     bbox_min = pts_f.min(axis=0)
     bbox_max = pts_f.max(axis=0)
     bbox = bbox_max - bbox_min
+    z_min = float(pts_f[:, 2].min())
+    z_max = float(pts_f[:, 2].max())
+    finite_ratio = float(pts_f.shape[0] / pts.shape[0])
     return {
         "tag": tag,
         "n": int(pts.shape[0]),
         "finite_n": int(pts_f.shape[0]),
+        "finite_ratio": finite_ratio,
         "bbox": bbox.tolist(),
         "bbox_diag": float(np.linalg.norm(bbox)),
+        "z_min": z_min,
+        "z_max": z_max,
+        "z_range": z_max - z_min,
         "centroid": pts_f.mean(axis=0).tolist(),
     }
 
@@ -239,6 +246,7 @@ def process_scan(
     target_tris: int,
     remove_outliers: bool,
     unit_scale: Optional[float],
+    units: Optional[str],
 ) -> None:
     try:
         if not os.path.exists(FLAME_MODEL_PATH) or not os.path.exists(MEDIAPIPE_EMBEDDING_PATH):
@@ -248,7 +256,7 @@ def process_scan(
         point_cloud = read_point_cloud_from_path(ply_path)
         logger.info("Scan %s stats: %s", scan_id, pc_stats(point_cloud, "raw_ply"))
         update_status(scan_id, "processing", stage="units")
-        unit_result = normalize_units(point_cloud, override_scale=unit_scale)
+        unit_result = normalize_units(point_cloud, override_scale=unit_scale, override_units=units)
         logger.info("Scan %s stats: %s", scan_id, pc_stats(unit_result.point_cloud, "after_units"))
         if unit_result.warnings:
             update_status(scan_id, "processing", stage="units", message=",".join(unit_result.warnings))
@@ -352,6 +360,7 @@ async def create_scan(
     target_tris: int = Query(60000, ge=1000, le=500000),
     remove_outliers: bool = Query(False),
     unit_scale: Optional[float] = Query(None),
+    units: Optional[str] = Query(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
     raw_data = await ply.read()
@@ -373,6 +382,7 @@ async def create_scan(
         target_tris,
         remove_outliers,
         unit_scale,
+        units,
     )
 
     base_url = str(request.base_url).rstrip("/")
