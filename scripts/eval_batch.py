@@ -15,7 +15,7 @@ def run_one(ply_path: str, fit_config: FitConfig) -> dict[str, float]:
     point_cloud = o3d.io.read_point_cloud(ply_path)
     unit_result = normalize_units(point_cloud)
     point_cloud.estimate_normals()
-    mesh, landmarks, _, _ = fit_flame_mesh(
+    mesh, landmarks, _, _, _ = fit_flame_mesh(
         point_cloud,
         flame_model_path="backend/assets/flame/flame2023_Open.pkl",
         mediapipe_embedding_path="backend/assets/flame/mediapipe_landmark_embedding.npz",

@@ -270,7 +270,7 @@ def process_scan(
         logger.info("Scan %s stats: %s", scan_id, pc_stats(processed, "after_preprocess"))
         update_status(scan_id, "processing", stage="fit")
         fit_config = FitConfig()
-        mesh, landmarks, stage_results, sparse_mode = fit_flame_mesh(
+        mesh, landmarks, stage_results, sparse_mode, timed_out = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
             mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
@@ -290,6 +290,9 @@ def process_scan(
         qc = build_qc(metrics, fit_config)
         if sparse_mode:
             qc.warnings.append("POINTCLOUD_SPARSE")
+            qc.pass_fit = False
+        if timed_out:
+            qc.warnings.append("FIT_TIMEOUT")
             qc.pass_fit = False
         repeatability = repeatability_check(
             processed,

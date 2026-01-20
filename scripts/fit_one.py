@@ -28,7 +28,7 @@ def main() -> None:
     processed.estimate_normals()
 
     fit_config = FitConfig()
-    mesh, landmarks, stage_results, _ = fit_flame_mesh(
+    mesh, landmarks, stage_results, _, _ = fit_flame_mesh(
         processed,
         flame_model_path="backend/assets/flame/flame2023_Open.pkl",
         mediapipe_embedding_path="backend/assets/flame/mediapipe_landmark_embedding.npz",

@@ -113,7 +113,7 @@ def fit_flame_mesh(
     fit_config: FitConfig | None = None,
     max_seconds: float = 60.0,
     max_iters: int = 250,
-) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool]:
+) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool, bool]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
     device = torch.device("cpu")
@@ -230,6 +230,7 @@ def fit_flame_mesh(
     rigid_t = torch.tensor(icp.transformation[:3, 3].tolist(), device=device, dtype=torch.float32)
 
     stage_results: list[StageResult] = []
+    timed_out = False
 
     def huber(x: torch.Tensor, delta: float) -> torch.Tensor:
         abs_x = torch.abs(x)
@@ -301,6 +302,7 @@ def fit_flame_mesh(
         }
 
     def optimize_stage(name: str, iters: int, params: list[torch.Tensor]) -> None:
+        nonlocal timed_out
         optimizer = torch.optim.Adam(params, lr=0.01)
         start_ts = time.time()
         best_loss = float("inf")
@@ -308,7 +310,8 @@ def fit_flame_mesh(
 
         for step in range(min(iters, max_iters)):
             if time.time() - start_ts > max_seconds:
-                raise TimeoutError("FLAME fitting timed out.")
+                timed_out = True
+                break
             optimizer.zero_grad()
             vertices, _ = flame(
                 shape_params=shape_params,
@@ -402,4 +405,4 @@ def fit_flame_mesh(
     landmarks = compute_flame_landmarks(verts_np, np.asarray(faces), mediapipe_embedding_path)
     logger.info("FLAME fitting complete: vertices=%s faces=%s",
                 len(flame_mesh.vertices), len(flame_mesh.triangles))
-    return flame_mesh, landmarks, stage_results, sparse_mode
+    return flame_mesh, landmarks, stage_results, sparse_mode, timed_out
