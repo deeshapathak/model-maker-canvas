@@ -22,6 +22,7 @@ def repeatability_check(
             fit_config=config,
             max_seconds=20.0,
             max_iters=100,
+            freeze_expression=False,
         )
         nose_positions.append(landmarks[nose_tip_idx])
 

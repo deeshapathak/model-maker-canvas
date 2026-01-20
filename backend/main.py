@@ -127,6 +127,36 @@ def crop_face_region(point_cloud: o3d.geometry.PointCloud) -> o3d.geometry.Point
     return cropped
 
 
+def crop_by_landmarks(point_cloud: o3d.geometry.PointCloud, landmarks: np.ndarray) -> o3d.geometry.PointCloud:
+    if landmarks.size == 0:
+        return point_cloud
+    pts = np.asarray(point_cloud.points)
+    if pts.shape[0] == 0:
+        return point_cloud
+    lmk_min = landmarks.min(axis=0)
+    lmk_max = landmarks.max(axis=0)
+    margin = 0.03  # 30mm margin
+    min_xyz = lmk_min - margin
+    max_xyz = lmk_max + margin
+    mask = (
+        (pts[:, 0] >= min_xyz[0])
+        & (pts[:, 0] <= max_xyz[0])
+        & (pts[:, 1] >= min_xyz[1])
+        & (pts[:, 1] <= max_xyz[1])
+        & (pts[:, 2] >= min_xyz[2])
+        & (pts[:, 2] <= max_xyz[2])
+    )
+    if mask.mean() < 0.2:
+        return point_cloud
+    cropped = o3d.geometry.PointCloud()
+    cropped.points = o3d.utility.Vector3dVector(pts[mask])
+    if point_cloud.has_colors():
+        colors = np.asarray(point_cloud.colors)
+        if colors.shape[0] == pts.shape[0]:
+            cropped.colors = o3d.utility.Vector3dVector(colors[mask])
+    return cropped
+
+
 def pc_stats(point_cloud: o3d.geometry.PointCloud, tag: str) -> dict:
     pts = np.asarray(point_cloud.points)
     if pts.size == 0:
@@ -352,6 +382,7 @@ def process_scan(
             fit_config=fit_config,
             max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
             max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "250")),
+            freeze_expression=False,
         )
         mesh_vertices = np.asarray(mesh.vertices)
         cloud_points = np.asarray(processed.points)
@@ -369,6 +400,52 @@ def process_scan(
         if timed_out:
             qc.warnings.append("FIT_TIMEOUT")
             qc.pass_fit = False
+
+        should_refit = (
+            metrics["outlier_ratio"] > 0.5
+            or metrics["landmark_rms_mm"] > 10.0
+            or metrics["p95_mm"] > 25.0
+        )
+        if should_refit:
+            update_status(scan_id, "processing", stage="refit")
+            refined = crop_by_landmarks(processed, landmarks)
+            mesh_refit, landmarks_refit, stage_results_refit, sparse_mode_refit, timed_out_refit = (
+                fit_flame_mesh(
+                    refined,
+                    flame_model_path=FLAME_MODEL_PATH,
+                    mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+                    fit_config=fit_config,
+                    max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
+                    max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "220")),
+                    freeze_expression=True,
+                )
+            )
+            mesh_vertices_refit = np.asarray(mesh_refit.vertices)
+            refined_points = np.asarray(refined.points)
+            metrics_refit = surface_error_metrics(mesh_vertices_refit, refined_points)
+            metrics_refit["nose_p95_mm"] = nose_error_p95_mm(landmarks_refit, refined_points)
+            metrics_refit["landmark_rms_mm"] = landmark_rms_mm(landmarks_refit, refined_points)
+            metrics_refit["units_inferred"] = unit_result.units_inferred
+            metrics_refit["unit_scale_applied"] = unit_result.unit_scale_applied
+            metrics_refit["nose_definition_version"] = "mp_v1_radius"
+
+            qc_refit = build_qc(metrics_refit, fit_config)
+            if sparse_mode_refit:
+                qc_refit.warnings.append("POINTCLOUD_SPARSE")
+                qc_refit.pass_fit = False
+            if timed_out_refit:
+                qc_refit.warnings.append("FIT_TIMEOUT")
+                qc_refit.pass_fit = False
+
+            better_refit = metrics_refit["p95_mm"] < metrics["p95_mm"]
+            if better_refit:
+                mesh = mesh_refit
+                landmarks = landmarks_refit
+                stage_results = stage_results_refit
+                sparse_mode = sparse_mode_refit
+                timed_out = timed_out_refit
+                metrics = metrics_refit
+                qc = qc_refit
         repeatability_enabled = os.getenv("ENABLE_REPEATABILITY", "0") == "1"
         if repeatability_enabled and not timed_out:
             repeatability = repeatability_check(

@@ -33,6 +33,7 @@ def main() -> None:
         flame_model_path="backend/assets/flame/flame2023_Open.pkl",
         mediapipe_embedding_path="backend/assets/flame/mediapipe_landmark_embedding.npz",
         fit_config=fit_config,
+        freeze_expression=False,
     )
 
     glb_bytes = mesh_to_glb(mesh)

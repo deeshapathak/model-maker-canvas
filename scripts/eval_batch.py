@@ -20,6 +20,7 @@ def run_one(ply_path: str, fit_config: FitConfig) -> dict[str, float]:
         flame_model_path="backend/assets/flame/flame2023_Open.pkl",
         mediapipe_embedding_path="backend/assets/flame/mediapipe_landmark_embedding.npz",
         fit_config=fit_config,
+        freeze_expression=False,
     )
     mesh_vertices = np.asarray(mesh.vertices)
     cloud_points = np.asarray(point_cloud.points)

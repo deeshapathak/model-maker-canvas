@@ -113,6 +113,7 @@ def fit_flame_mesh(
     fit_config: FitConfig | None = None,
     max_seconds: float = 60.0,
     max_iters: int = 250,
+    freeze_expression: bool = False,
 ) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool, bool]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
@@ -184,7 +185,7 @@ def fit_flame_mesh(
 
     # Initialize FLAME parameters.
     shape_params = torch.zeros((1, 100), dtype=torch.float32, device=device, requires_grad=True)
-    expression_params = torch.zeros((1, 50), dtype=torch.float32, device=device, requires_grad=True)
+    expression_params = torch.zeros((1, 50), dtype=torch.float32, device=device, requires_grad=not freeze_expression)
     pose_params = torch.zeros((1, 6), dtype=torch.float32, device=device, requires_grad=True)
     translation = torch.zeros((1, 3), dtype=torch.float32, device=device, requires_grad=True)
     scale = torch.ones((1, 1), dtype=torch.float32, device=device, requires_grad=True)
@@ -378,7 +379,7 @@ def fit_flame_mesh(
         [pose_params, translation, scale],
     )
 
-    if not sparse_mode:
+    if not sparse_mode and not freeze_expression:
         # Stage 2: expression + rigid.
         optimize_stage(
             "expression",
@@ -390,7 +391,7 @@ def fit_flame_mesh(
         optimize_stage(
             "shape",
             fit_config.iters_shape,
-            [shape_params, expression_params, pose_params, translation, scale],
+        [shape_params, expression_params, pose_params, translation, scale],
         )
 
     with torch.no_grad():
