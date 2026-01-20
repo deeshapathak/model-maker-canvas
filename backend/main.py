@@ -74,6 +74,7 @@ def preprocess_point_cloud(
             processed.colors = o3d.utility.Vector3dVector(colors / 255.0)
     if remove_outliers:
         processed, _ = processed.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        processed, _ = processed.remove_radius_outlier(nb_points=16, radius=0.02)
 
     if processed.is_empty():
         raise HTTPException(
@@ -95,13 +96,26 @@ def crop_face_region(point_cloud: o3d.geometry.PointCloud) -> o3d.geometry.Point
     x = pts[:, 0]
     y = pts[:, 1]
     z = pts[:, 2]
-    x_min, x_max = np.percentile(x, [5, 95])
-    y_min, y_max = np.percentile(y, [5, 95])
+    x_min, x_max = np.percentile(x, [10, 90])
+    y_min, y_max = np.percentile(y, [10, 90])
     z_min = float(z.min())
     z_max = float(z.max())
     z_range = max(z_max - z_min, 1e-6)
-    z_cut = z_min + 0.75 * z_range  # keep closest 75% of depth
-    mask = (x >= x_min) & (x <= x_max) & (y >= y_min) & (y <= y_max) & (z <= z_cut)
+    z_cut = z_min + 0.6 * z_range  # keep closest 60% of depth
+    x_mid = float(np.median(x))
+    y_mid = float(np.median(y))
+    x_range = max(x_max - x_min, 1e-6)
+    y_range = max(y_max - y_min, 1e-6)
+    radius = 0.6 * max(x_range, y_range)
+    radial = np.sqrt((x - x_mid) ** 2 + (y - y_mid) ** 2) <= radius
+    mask = (
+        (x >= x_min)
+        & (x <= x_max)
+        & (y >= y_min)
+        & (y <= y_max)
+        & (z <= z_cut)
+        & radial
+    )
     if mask.mean() < 0.2:
         return point_cloud
     cropped = o3d.geometry.PointCloud()
@@ -324,7 +338,12 @@ def process_scan(
         logger.info("Scan %s processed points=%s", scan_id, processed_points.shape[0])
         logger.info("Scan %s stats: %s", scan_id, pc_stats(processed, "after_preprocess"))
         update_status(scan_id, "processing", stage="fit")
-        fit_config = FitConfig()
+        fit_config = FitConfig(
+            w_landmark=4.0,
+            w_point2plane=1.0,
+            w_nose_multiplier=2.0,
+            trim_percentile=0.95,
+        )
         mesh, landmarks, stage_results, sparse_mode, timed_out = fit_flame_mesh(
             processed,
             flame_model_path=FLAME_MODEL_PATH,
