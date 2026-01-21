@@ -76,12 +76,17 @@ def _binding_map(points: np.ndarray,
     weights = np.zeros((points.shape[0], k), dtype=np.float32)
     for i, pt in enumerate(points):
         _, idx, _ = kdtree.search_knn_vector_3d(pt, k)
-        idx = idx + [idx[-1]] * (k - len(idx))
-        v = flame_vertices[idx]
+        # Convert IntVector to numpy array
+        idx_arr = np.asarray(idx, dtype=np.uint32)
+        # Pad if needed
+        if len(idx_arr) < k:
+            padding = np.full((k - len(idx_arr),), idx_arr[-1] if len(idx_arr) > 0 else 0, dtype=np.uint32)
+            idx_arr = np.concatenate([idx_arr, padding])
+        v = flame_vertices[idx_arr]
         d = np.linalg.norm(v - pt, axis=1)
         w = 1.0 / (d + eps)
         w /= w.sum() if w.sum() > 0 else 1.0
-        indices[i] = np.asarray(idx, dtype=np.uint32)
+        indices[i] = idx_arr[:k]
         weights[i] = w.astype(np.float32)
     blended = np.sum(flame_vertices[indices] * weights[:, :, None], axis=1)
     offsets = points - blended
