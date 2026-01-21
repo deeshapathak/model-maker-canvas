@@ -34,6 +34,7 @@ def main() -> None:
         mediapipe_embedding_path="backend/assets/flame/mediapipe_landmark_embedding.npz",
         fit_config=fit_config,
         freeze_expression=False,
+        freeze_jaw=False,
     )
 
     glb_bytes = mesh_to_glb(mesh)

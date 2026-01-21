@@ -383,6 +383,7 @@ def process_scan(
             max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
             max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "250")),
             freeze_expression=False,
+            freeze_jaw=False,
         )
         mesh_vertices = np.asarray(mesh.vertices)
         cloud_points = np.asarray(processed.points)
@@ -418,6 +419,7 @@ def process_scan(
                     max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
                     max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "220")),
                     freeze_expression=True,
+                    freeze_jaw=True,
                 )
             )
             mesh_vertices_refit = np.asarray(mesh_refit.vertices)
@@ -449,6 +451,7 @@ def process_scan(
                         max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
                         max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "200")),
                         freeze_expression=True,
+                        freeze_jaw=True,
                     )
                     mesh_crop_vertices = np.asarray(mesh_crop.vertices)
                     refined_points = np.asarray(refined.points)

@@ -15,6 +15,7 @@ class FitConfig(BaseModel):
     w_point2plane: float = 0.5
     w_prior_shape: float = 0.005
     w_prior_expr: float = 0.005
+    w_prior_jaw: float = 0.02
 
     huber_delta: float = 0.01
 
@@ -22,6 +23,7 @@ class FitConfig(BaseModel):
     nose_radius_mm: float = 30.0
     nose_kNN: Optional[int] = None
     w_mouth_multiplier: float = 2.5
+    jaw_max_rad: float = 0.35
 
     trim_percentile: Optional[float] = 0.98
 

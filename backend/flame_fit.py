@@ -114,6 +114,7 @@ def fit_flame_mesh(
     max_seconds: float = 60.0,
     max_iters: int = 250,
     freeze_expression: bool = False,
+    freeze_jaw: bool = False,
 ) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool, bool]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
@@ -337,6 +338,7 @@ def fit_flame_mesh(
             reg = (
                 fit_config.w_prior_shape * shape_params.pow(2).mean()
                 + fit_config.w_prior_expr * expression_params.pow(2).mean()
+                + fit_config.w_prior_jaw * pose_params[:, 3:].pow(2).mean()
             )
             loss = (
                 fit_config.w_chamfer * terms["chamfer"]
@@ -348,11 +350,17 @@ def fit_flame_mesh(
             if not torch.isfinite(loss):
                 raise ValueError("FLAME fitting diverged (loss is NaN/Inf).")
             loss.backward()
+            if freeze_jaw and pose_params.grad is not None:
+                pose_params.grad[:, 3:] = 0
             optimizer.step()
             with torch.no_grad():
                 shape_params.clamp_(-4.0, 4.0)
                 expression_params.clamp_(-4.0, 4.0)
                 pose_params.clamp_(-1.0, 1.0)
+                jaw_max = fit_config.jaw_max_rad
+                pose_params[:, 3:] = pose_params[:, 3:].clamp(-jaw_max, jaw_max)
+                if freeze_jaw:
+                    pose_params[:, 3:] = 0
                 scale.clamp_(0.5, 2.0)
 
             loss_value = float(loss.detach().cpu().item())
