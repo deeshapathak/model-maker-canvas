@@ -7,12 +7,16 @@ interface ModelViewerProps {
   modelPath?: string;
   scale?: [number, number, number];
   deformationStrength?: number;
+  scanId?: string | null;
+  overlayOpacity?: number;
 }
 
 export const ModelViewer = ({ 
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
-  deformationStrength = 0.1
+  deformationStrength = 0.1,
+  scanId = null,
+  overlayOpacity = 0.8
 }: ModelViewerProps = {}) => {
   return (
     <div className="h-96 lg:h-[500px] bg-gray-50 relative">
@@ -30,6 +34,8 @@ export const ModelViewer = ({
               modelPath={modelPath} 
               scale={scale} 
               deformationStrength={deformationStrength}
+              scanId={scanId}
+              overlayOpacity={overlayOpacity}
             />
           </Stage>
           <Environment preset="studio" />

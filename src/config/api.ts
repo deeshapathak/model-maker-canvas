@@ -9,6 +9,8 @@ export const API_CONFIG = {
     GET_LATEST_SCAN_GLB: '/api/scans/latest.glb',
     GET_SCAN_GLB: (id: string) => `/api/scans/${id}.glb`,
     GET_SCAN_STATUS: (id: string) => `/api/scans/${id}/status`,
+    GET_OVERLAY: (id: string) => `/api/scans/${id}/overlay`,
+    GET_FLAME_BUFFERS: (id: string) => `/api/scans/${id}/flame_buffers`,
   },
   
   // Request options

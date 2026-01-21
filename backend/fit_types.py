@@ -71,3 +71,14 @@ class FitResult(BaseModel):
     stage_results: List[StageResult] = Field(default_factory=list)
     metrics: FitMetrics
     qc: QCResult
+
+
+class OverlayConfig(BaseModel):
+    enabled: bool = True
+    knn_k: int = 4
+    max_dist_m: float = 0.03
+    voxel_size: float = 0.003
+    max_points: int = 80000
+    min_points: int = 10000
+    epsilon: float = 1e-6
+    version: str = "v1"

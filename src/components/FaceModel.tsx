@@ -1,7 +1,10 @@
 import { useRef, useState, Suspense, useEffect, useMemo } from "react";
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2 } from "three";
+import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2, Points, BufferAttribute, Uint8BufferAttribute } from "three";
+import { API_CONFIG } from "@/config/api";
+import { fetchOverlayPack, updateOverlayPositions } from "@/utils/overlay";
+import type { OverlayPack } from "@/types/overlay";
 
 // Fallback component when GLB is loading or fails
 const FallbackSphere = ({ onClick, editingArea, deformationStrength }: { 
@@ -67,19 +70,28 @@ const ElonMuskModel = ({
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
   editingArea,
-  deformationStrength = 0.1
+  deformationStrength = 0.1,
+  scanId,
+  overlayOpacity = 0.8
 }: { 
   onClick: () => void;
   modelPath?: string;
   scale?: [number, number, number];
   editingArea?: string | null;
   deformationStrength?: number;
+  scanId?: string | null;
+  overlayOpacity?: number;
 }) => {
   const meshRef = useRef<Mesh>(null);
+  const overlayRef = useRef<Points>(null);
+  const overlayPackRef = useRef<OverlayPack | null>(null);
+  const overlayPositionsRef = useRef<Float32Array | null>(null);
+  const overlayGeometryRef = useRef<BufferGeometry | null>(null);
   const originalPositionsRef = useRef<Float32Array | null>(null);
   const [isDeforming, setIsDeforming] = useState(false);
   const [isSculpting, setIsSculpting] = useState(false);
   const [brushPosition, setBrushPosition] = useState<Vector3>(new Vector3());
+  const [overlayReady, setOverlayReady] = useState(false);
   const { camera, gl } = useThree();
 
   // Use useGLTF directly and let Suspense handle errors
@@ -204,10 +216,65 @@ const ElonMuskModel = ({
     }
   });
 
+  useFrame(() => {
+    if (!overlayReady || !overlayPackRef.current || !overlayPositionsRef.current) {
+      return;
+    }
+    const geometry = overlayGeometryRef.current;
+    if (!geometry) {
+      return;
+    }
+    let flamePositions: Float32Array | null = null;
+    clonedScene?.traverse((child) => {
+      if (child instanceof Mesh && child.geometry && !flamePositions) {
+        const positions = child.geometry.attributes.position;
+        flamePositions = positions?.array as Float32Array;
+      }
+    });
+    if (!flamePositions) {
+      return;
+    }
+    updateOverlayPositions(overlayPackRef.current, flamePositions, overlayPositionsRef.current);
+    const attr = geometry.getAttribute("position") as BufferAttribute;
+    attr.needsUpdate = true;
+  });
+
   useEffect(() => {
     console.log(`Loading 3D model from: ${modelPath}`);
     console.log('Model scene:', clonedScene);
   }, [modelPath, clonedScene]);
+
+  useEffect(() => {
+    if (!scanId) {
+      setOverlayReady(false);
+      return;
+    }
+    const overlayUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_OVERLAY(encodeURIComponent(scanId))}`;
+    let cancelled = false;
+    fetchOverlayPack(overlayUrl)
+      .then((pack) => {
+        if (cancelled) {
+          return;
+        }
+        overlayPackRef.current = pack;
+        const positions = new Float32Array(pack.points);
+        overlayPositionsRef.current = positions;
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+        const colorAttr = new Uint8BufferAttribute(pack.colors, 3);
+        colorAttr.normalized = true;
+        geometry.setAttribute("color", colorAttr);
+        overlayGeometryRef.current = geometry;
+        setOverlayReady(true);
+      })
+      .catch((err) => {
+        console.warn("Overlay load failed:", err);
+        setOverlayReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId]);
 
   // If model failed to load, show fallback with deformation
   if (!clonedScene) {
@@ -240,6 +307,17 @@ const ElonMuskModel = ({
         radius={0.1}
         isActive={isSculpting}
       />
+
+      {overlayReady && overlayGeometryRef.current && (
+        <points ref={overlayRef} geometry={overlayGeometryRef.current}>
+          <pointsMaterial
+            size={0.002}
+            vertexColors
+            transparent
+            opacity={overlayOpacity}
+          />
+        </points>
+      )}
     </group>
   );
 };
@@ -248,12 +326,16 @@ interface FaceModelProps {
   modelPath?: string;
   scale?: [number, number, number];
   deformationStrength?: number;
+  scanId?: string | null;
+  overlayOpacity?: number;
 }
 
 export const FaceModel = ({ 
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
-  deformationStrength = 0.1
+  deformationStrength = 0.1,
+  scanId = null,
+  overlayOpacity = 0.8
 }: FaceModelProps = {}) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingArea, setEditingArea] = useState<string | null>(null);
@@ -274,6 +356,8 @@ export const FaceModel = ({
           scale={scale}
           editingArea={editingArea}
           deformationStrength={deformationStrength}
+          scanId={scanId}
+          overlayOpacity={overlayOpacity}
         />
       </Suspense>
 

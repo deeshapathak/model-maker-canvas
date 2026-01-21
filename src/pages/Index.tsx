@@ -21,6 +21,7 @@ const Index = () => {
   const scanIdFromUrl = searchParams.get('scanId');
   const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
   const isUsingRemoteScan = !!activeModelUrl;
+  const overlayOpacity = qcWarning ? 0.25 : 0.9;
 
   useEffect(() => {
     return () => {
@@ -180,6 +181,8 @@ const Index = () => {
                 <ModelViewer 
                   modelPath={currentModelPath}
                   deformationStrength={deformationStrength} 
+                  scanId={scanIdFromUrl}
+                  overlayOpacity={overlayOpacity}
                 />
               )}
               

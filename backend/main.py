@@ -15,9 +15,10 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .fit_types import FitConfig, FitMetrics, FitResult
+from .fit_types import FitConfig, FitMetrics, FitResult, OverlayConfig
 from .flame_fit import fit_flame_mesh
 from .metrics import landmark_rms_mm, nose_error_p95_mm, surface_error_metrics
+from .overlay import build_overlay_pack, write_overlay_pack
 from .qc import build_qc
 from .repeatability import repeatability_check
 from .units import normalize_units
@@ -288,6 +289,30 @@ def store_diagnostics(scan_id: str, diagnostics: dict) -> str:
     return scan_id
 
 
+def overlay_meta_path(scan_id: str) -> str:
+    return os.path.join(SCAN_DIR, f"{scan_id}_overlay_meta.json")
+
+
+def overlay_blob_path(scan_id: str, suffix: str) -> str:
+    return os.path.join(SCAN_DIR, f"{scan_id}_{suffix}.bin")
+
+
+def flame_positions_path(scan_id: str) -> str:
+    return os.path.join(SCAN_DIR, f"{scan_id}_flame_positions.bin")
+
+
+def flame_indices_path(scan_id: str) -> str:
+    return os.path.join(SCAN_DIR, f"{scan_id}_flame_indices.bin")
+
+
+def store_flame_buffers(scan_id: str, mesh: o3d.geometry.TriangleMesh) -> None:
+    os.makedirs(SCAN_DIR, exist_ok=True)
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.triangles, dtype=np.uint32)
+    vertices.tofile(flame_positions_path(scan_id))
+    faces.tofile(flame_indices_path(scan_id))
+
+
 logger = logging.getLogger("rhinovate.backend")
 
 
@@ -488,6 +513,24 @@ def process_scan(
                 timed_out = timed_out_refit
                 metrics = metrics_refit
                 qc = qc_refit
+
+        update_status(scan_id, "processing", stage="overlay")
+        overlay_meta = None
+        try:
+            overlay_config = OverlayConfig(
+                enabled=os.getenv("OVERLAY_ENABLED", "1") == "1",
+                knn_k=int(os.getenv("OVERLAY_KNN_K", "4")),
+                max_dist_m=float(os.getenv("OVERLAY_MAX_DIST_M", "0.03")),
+                voxel_size=float(os.getenv("OVERLAY_VOXEL_SIZE", "0.003")),
+                max_points=int(os.getenv("OVERLAY_MAX_POINTS", "80000")),
+                min_points=int(os.getenv("OVERLAY_MIN_POINTS", "10000")),
+            )
+            if overlay_config.enabled:
+                overlay_pack = build_overlay_pack(unit_result.point_cloud, mesh, overlay_config)
+                overlay_meta = write_overlay_pack(SCAN_DIR, scan_id, overlay_pack)
+        except Exception as exc:
+            logger.warning("Overlay pack build failed for scan %s: %s", scan_id, exc)
+            overlay_meta = {"enabled": False, "reason": "build_failed"}
         repeatability_enabled = os.getenv("ENABLE_REPEATABILITY", "0") == "1"
         if repeatability_enabled and not timed_out:
             repeatability = repeatability_check(
@@ -514,10 +557,14 @@ def process_scan(
             qc=qc,
         )
         update_status(scan_id, "processing", stage="export")
+        store_flame_buffers(scan_id, mesh)
         glb_bytes = mesh_to_glb(mesh)
         store_glb(scan_id, glb_bytes)
         store_landmarks(scan_id, landmarks)
-        store_diagnostics(scan_id, fit_result.model_dump())
+        diagnostics_payload = fit_result.model_dump()
+        if overlay_meta:
+            diagnostics_payload["overlay"] = overlay_meta
+        store_diagnostics(scan_id, diagnostics_payload)
         update_status(scan_id, "ready")
     except Exception as exc:  # pragma: no cover - background errors
         logger.exception("Scan %s failed during processing.", scan_id)
@@ -640,6 +687,75 @@ def get_scan(scan_id: str) -> FileResponse:
         filename="scan.glb",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.get("/api/scans/{scan_id}/overlay")
+def get_overlay(scan_id: str, request: Request) -> JSONResponse:
+    meta_path = overlay_meta_path(scan_id)
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Overlay not found.")
+    with open(meta_path, "r", encoding="utf-8") as handle:
+        meta = json.load(handle)
+    base_url = str(request.base_url).rstrip("/")
+    if meta.get("enabled"):
+        meta = meta.copy()
+        meta["urls"] = {
+            "points": f"{base_url}/api/scans/{scan_id}/overlay/{meta['points_bin']}",
+            "colors": f"{base_url}/api/scans/{scan_id}/overlay/{meta['colors_bin']}",
+            "indices": f"{base_url}/api/scans/{scan_id}/overlay/{meta['indices_bin']}",
+            "weights": f"{base_url}/api/scans/{scan_id}/overlay/{meta['weights_bin']}",
+            "offsets": f"{base_url}/api/scans/{scan_id}/overlay/{meta['offsets_bin']}",
+        }
+    return JSONResponse(meta)
+
+
+@app.get("/api/scans/{scan_id}/overlay/{blob_name}")
+def get_overlay_blob(scan_id: str, blob_name: str) -> FileResponse:
+    allowed = (
+        f"{scan_id}_overlay_points.bin",
+        f"{scan_id}_overlay_colors.bin",
+        f"{scan_id}_overlay_indices.bin",
+        f"{scan_id}_overlay_weights.bin",
+        f"{scan_id}_overlay_offsets.bin",
+    )
+    if blob_name not in allowed:
+        raise HTTPException(status_code=404, detail="Overlay blob not found.")
+    path = os.path.join(SCAN_DIR, blob_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Overlay blob not found.")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/scans/{scan_id}/flame_buffers")
+def get_flame_buffers(scan_id: str, request: Request) -> JSONResponse:
+    positions_path = flame_positions_path(scan_id)
+    indices_path = flame_indices_path(scan_id)
+    if not os.path.exists(positions_path) or not os.path.exists(indices_path):
+        raise HTTPException(status_code=404, detail="FLAME buffers not found.")
+    base_url = str(request.base_url).rstrip("/")
+    positions_count = int(os.path.getsize(positions_path) / (4 * 3))
+    indices_count = int(os.path.getsize(indices_path) / (4 * 3))
+    return JSONResponse(
+        {
+            "positions_url": f"{base_url}/api/scans/{scan_id}/flame/positions.bin",
+            "indices_url": f"{base_url}/api/scans/{scan_id}/flame/indices.bin",
+            "positions_count": positions_count,
+            "indices_count": indices_count,
+        }
+    )
+
+
+@app.get("/api/scans/{scan_id}/flame/{blob_name}")
+def get_flame_blob(scan_id: str, blob_name: str) -> FileResponse:
+    if blob_name == "positions.bin":
+        path = flame_positions_path(scan_id)
+    elif blob_name == "indices.bin":
+        path = flame_indices_path(scan_id)
+    else:
+        raise HTTPException(status_code=404, detail="FLAME blob not found.")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="FLAME blob not found.")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/scans/{scan_id}/landmarks")
