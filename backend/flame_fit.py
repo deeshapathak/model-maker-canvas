@@ -231,6 +231,10 @@ def fit_flame_mesh(
     rigid_R = torch.tensor(icp.transformation[:3, :3].tolist(), device=device, dtype=torch.float32)
     rigid_t = torch.tensor(icp.transformation[:3, 3].tolist(), device=device, dtype=torch.float32)
 
+    if freeze_jaw:
+        with torch.no_grad():
+            pose_params[:, 3:] = 0
+
     stage_results: list[StageResult] = []
     timed_out = False
 
