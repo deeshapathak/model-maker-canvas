@@ -663,8 +663,11 @@ async def create_scan(
                 image_bytes = await upload_file.read()
                 if image_bytes:
                     gemini_frames.append((image_bytes, pose_name))
+                    logger.info(f"Scan {scan_id}: Received {pose_name} image ({len(image_bytes)} bytes)")
             except Exception as e:
-                logger.warning(f"Failed to read image_{pose_name}: {e}")
+                logger.warning(f"Scan {scan_id}: Failed to read image_{pose_name}: {e}")
+    
+    logger.info(f"Scan {scan_id}: Collected {len(gemini_frames)} frames for Gemini analysis")
 
     update_status(scan_id, "processing")
     background_tasks.add_task(

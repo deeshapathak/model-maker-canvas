@@ -54,7 +54,7 @@ class GeminiService:
             try:
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel('gemini-pro-vision')
-                logger.info("Gemini Vision API service initialized")
+                logger.info("Gemini Vision API service initialized (API key present)")
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini: {e}")
                 self.enabled = False
