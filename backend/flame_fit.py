@@ -115,6 +115,7 @@ def fit_flame_mesh(
     max_iters: int = 250,
     freeze_expression: bool = False,
     freeze_jaw: bool = False,
+    initial_shape_params: list[float] | None = None,
 ) -> tuple[o3d.geometry.TriangleMesh, np.ndarray, list[StageResult], bool, bool]:
     flame, faces = _load_flame_model(flame_model_path, mediapipe_embedding_path)
 
@@ -185,7 +186,18 @@ def fit_flame_mesh(
     logger.info("FLAME fitting: target points=%s", target_np.shape[0])
 
     # Initialize FLAME parameters.
-    shape_params = torch.zeros((1, 100), dtype=torch.float32, device=device, requires_grad=True)
+    # Use Gemini-estimated shape params if provided, else start from zero (mean face)
+    if initial_shape_params and len(initial_shape_params) == 100:
+        shape_init = torch.tensor([initial_shape_params], dtype=torch.float32, device=device)
+        # Clamp to reasonable range
+        shape_init = shape_init.clamp(-4.0, 4.0)
+        logger.info("FLAME fitting: Using provided initial shape params (mean abs: %.3f)", 
+                   float(shape_init.abs().mean()))
+    else:
+        shape_init = torch.zeros((1, 100), dtype=torch.float32, device=device)
+        logger.info("FLAME fitting: Using zero initialization (mean face)")
+    
+    shape_params = shape_init.clone().detach().requires_grad_(True)
     expression_params = torch.zeros((1, 50), dtype=torch.float32, device=device, requires_grad=not freeze_expression)
     pose_params = torch.zeros((1, 6), dtype=torch.float32, device=device, requires_grad=True)
     translation = torch.zeros((1, 3), dtype=torch.float32, device=device, requires_grad=True)

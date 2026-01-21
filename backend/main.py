@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .fit_types import FitConfig, FitMetrics, FitResult, OverlayConfig
 from .flame_fit import fit_flame_mesh
+from .gemini_service import get_gemini_service
 from .metrics import landmark_rms_mm, nose_error_p95_mm, surface_error_metrics
 from .overlay import build_overlay_pack, write_overlay_pack
 from .qc import build_qc
@@ -366,6 +367,7 @@ def process_scan(
     remove_outliers: bool,
     unit_scale: Optional[float],
     units: Optional[str],
+    gemini_frames: Optional[list[tuple[bytes, str]]] = None,
 ) -> None:
     try:
         if not os.path.exists(FLAME_MODEL_PATH) or not os.path.exists(MEDIAPIPE_EMBEDDING_PATH):
@@ -392,6 +394,23 @@ def process_scan(
         processed_points = np.asarray(processed.points)
         logger.info("Scan %s processed points=%s", scan_id, processed_points.shape[0])
         logger.info("Scan %s stats: %s", scan_id, pc_stats(processed, "after_preprocess"))
+        
+        # Call Gemini API for shape estimation (if frames provided)
+        initial_shape_params = None
+        if gemini_frames and len(gemini_frames) == 5:
+            update_status(scan_id, "processing", stage="gemini")
+            gemini_service = get_gemini_service()
+            gemini_result = gemini_service.analyze_faces(gemini_frames, timeout_seconds=15.0)
+            if gemini_result:
+                initial_shape_params = gemini_result.get_shape_params_array()
+                logger.info("Scan %s: Using Gemini shape params (first 5: %s)", 
+                           scan_id, initial_shape_params[:5] if initial_shape_params else None)
+            else:
+                logger.info("Scan %s: Gemini analysis failed/unavailable, using zero initialization", scan_id)
+        else:
+            logger.info("Scan %s: No Gemini frames provided (%s frames), using zero initialization", 
+                       scan_id, len(gemini_frames) if gemini_frames else 0)
+        
         update_status(scan_id, "processing", stage="fit")
         fit_config = FitConfig(
             w_landmark=4.0,
@@ -409,6 +428,7 @@ def process_scan(
             max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "250")),
             freeze_expression=False,
             freeze_jaw=True,
+            initial_shape_params=initial_shape_params,  # Pass Gemini shape params
         )
         mesh_vertices = np.asarray(mesh.vertices)
         cloud_points = np.asarray(processed.points)
@@ -445,6 +465,7 @@ def process_scan(
                     max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "220")),
                     freeze_expression=True,
                     freeze_jaw=True,
+                    initial_shape_params=initial_shape_params,  # Use same Gemini shape params
                 )
             )
             mesh_vertices_refit = np.asarray(mesh_refit.vertices)
@@ -604,6 +625,11 @@ async def ply_to_glb(
 async def create_scan(
     request: Request,
     ply: UploadFile = File(...),
+    image_front: Optional[UploadFile] = File(None),
+    image_left: Optional[UploadFile] = File(None),
+    image_right: Optional[UploadFile] = File(None),
+    image_down: Optional[UploadFile] = File(None),
+    image_up: Optional[UploadFile] = File(None),
     poisson_depth: int = Query(9, ge=4, le=12),
     target_tris: int = Query(60000, ge=1000, le=500000),
     remove_outliers: bool = Query(False),
@@ -621,6 +647,25 @@ async def create_scan(
     with open(ply_path, "wb") as handle:
         handle.write(raw_data)
 
+    # Collect RGB frames for Gemini analysis
+    gemini_frames = []
+    frame_mapping = [
+        (image_front, "front"),
+        (image_left, "left"),
+        (image_right, "right"),
+        (image_down, "down"),
+        (image_up, "up"),
+    ]
+    
+    for upload_file, pose_name in frame_mapping:
+        if upload_file:
+            try:
+                image_bytes = await upload_file.read()
+                if image_bytes:
+                    gemini_frames.append((image_bytes, pose_name))
+            except Exception as e:
+                logger.warning(f"Failed to read image_{pose_name}: {e}")
+
     update_status(scan_id, "processing")
     background_tasks.add_task(
         process_scan,
@@ -631,6 +676,7 @@ async def create_scan(
         remove_outliers,
         unit_scale,
         units,
+        gemini_frames,  # Pass frames for Gemini analysis
     )
 
     base_url = str(request.base_url).rstrip("/")
