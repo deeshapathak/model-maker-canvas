@@ -53,8 +53,15 @@ class GeminiService:
         else:
             try:
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel('gemini-pro-vision')
-                logger.info("Gemini Vision API service initialized (API key present)")
+                # Use gemini-1.5-flash for vision (multimodal input, faster than pro)
+                # Falls back to gemini-2.0-flash-exp if available
+                try:
+                    self.model = genai.GenerativeModel('gemini-1.5-flash')
+                    logger.info("Gemini Vision API service initialized with gemini-1.5-flash")
+                except Exception:
+                    # Fallback to experimental model if 1.5-flash not available
+                    self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                    logger.info("Gemini Vision API service initialized with gemini-2.0-flash-exp")
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini: {e}")
                 self.enabled = False
