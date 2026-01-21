@@ -84,23 +84,28 @@ class GeminiService:
             None if API call fails (fallback to zero initialization)
         """
         if not self.enabled:
-            logger.info("Gemini service disabled, skipping API call")
+            logger.warning("Gemini service disabled (check API key or SDK installation), skipping API call")
             return None
         
         if len(frames) != 5:
             logger.warning(f"Expected 5 frames, got {len(frames)}. Skipping Gemini analysis.")
             return None
         
+        logger.info(f"Gemini: Analyzing {len(frames)} frames (sizes: {[len(f[0]) for f in frames]} bytes)")
+        
         try:
             start_time = time.time()
+            logger.info("Gemini: Calling API...")
             result = self._call_gemini_api(frames, timeout_seconds)
             elapsed = time.time() - start_time
             
             if result:
                 logger.info(f"Gemini analysis complete in {elapsed:.2f}s")
+                if result.initial_shape_params:
+                    logger.info(f"Gemini: Shape params received (length: {len(result.initial_shape_params)}, non-zero count: {sum(1 for x in result.initial_shape_params if abs(x) > 0.01)})")
                 return result
             else:
-                logger.warning("Gemini API returned no result")
+                logger.warning("Gemini API returned no result (check response parsing)")
                 return None
                 
         except Exception as e:
@@ -167,21 +172,28 @@ class GeminiService:
         
         # Call API with timeout
         try:
+            logger.info("Gemini: Sending request to model...")
             response = self.model.generate_content(
                 prompt_parts,
                 request_options={"timeout": timeout_seconds}
             )
             
-            if not response or not response.text:
-                logger.warning("Gemini API returned empty response")
+            if not response:
+                logger.warning("Gemini API returned None response")
                 return None
             
+            if not response.text:
+                logger.warning("Gemini API returned empty text (response object exists but no text)")
+                logger.debug(f"Gemini response object: {response}")
+                return None
+            
+            logger.info(f"Gemini: Received response ({len(response.text)} chars)")
             # Parse JSON from response
             result = self._parse_gemini_response(response.text)
             return result
             
         except Exception as e:
-            logger.error(f"Gemini API call exception: {e}")
+            logger.error(f"Gemini API call exception: {e}", exc_info=True)
             return None
     
     def _parse_gemini_response(self, response_text: str) -> Optional[FaceAnalysisResult]:

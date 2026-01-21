@@ -400,13 +400,20 @@ def process_scan(
         if gemini_frames and len(gemini_frames) == 5:
             update_status(scan_id, "processing", stage="gemini")
             gemini_service = get_gemini_service()
+            logger.info("Scan %s: Calling Gemini API with %d frames (service enabled: %s)", 
+                       scan_id, len(gemini_frames), gemini_service.enabled)
             gemini_result = gemini_service.analyze_faces(gemini_frames, timeout_seconds=15.0)
             if gemini_result:
                 initial_shape_params = gemini_result.get_shape_params_array()
-                logger.info("Scan %s: Using Gemini shape params (first 5: %s)", 
-                           scan_id, initial_shape_params[:5] if initial_shape_params else None)
+                if initial_shape_params:
+                    mean_abs = sum(abs(x) for x in initial_shape_params) / len(initial_shape_params)
+                    max_abs = max(abs(x) for x in initial_shape_params)
+                    logger.info("Scan %s: Using Gemini shape params (mean abs: %.4f, max abs: %.4f, first 5: %s)", 
+                               scan_id, mean_abs, max_abs, initial_shape_params[:5])
+                else:
+                    logger.warning("Scan %s: Gemini returned None shape params", scan_id)
             else:
-                logger.info("Scan %s: Gemini analysis failed/unavailable, using zero initialization", scan_id)
+                logger.warning("Scan %s: Gemini analysis returned None (check API key, model availability, or API errors)", scan_id)
         else:
             logger.info("Scan %s: No Gemini frames provided (%s frames), using zero initialization", 
                        scan_id, len(gemini_frames) if gemini_frames else 0)
