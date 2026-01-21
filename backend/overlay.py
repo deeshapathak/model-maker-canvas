@@ -108,11 +108,11 @@ def build_overlay_pack(point_cloud: o3d.geometry.PointCloud,
         idx = np.random.default_rng(42).choice(points.shape[0], config.max_points, replace=False)
         points = points[idx]
         colors = colors[idx]
-    if points.shape[0] < config.min_points:
+    if points.shape[0] == 0:
         meta = {
             "enabled": False,
-            "reason": "not_enough_points",
-            "count": int(points.shape[0]),
+            "reason": "no_points",
+            "count": 0,
             "version": config.version,
         }
         return OverlayPack(points, colors, np.zeros((0, config.knn_k), dtype=np.uint32),
@@ -132,6 +132,8 @@ def build_overlay_pack(point_cloud: o3d.geometry.PointCloud,
         "max_dist_m": config.max_dist_m,
         "voxel_size": config.voxel_size,
     }
+    if points.shape[0] < config.min_points:
+        meta["warning"] = "low_point_count"
     return OverlayPack(points, colors, indices, weights, offsets, meta)
 
 
