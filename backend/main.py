@@ -408,10 +408,10 @@ def process_scan(
         )
         if should_refit:
             update_status(scan_id, "processing", stage="refit")
-            refined = crop_by_landmarks(processed, landmarks)
+            # Step 1: refit with frozen expression on the same cloud.
             mesh_refit, landmarks_refit, stage_results_refit, sparse_mode_refit, timed_out_refit = (
                 fit_flame_mesh(
-                    refined,
+                    processed,
                     flame_model_path=FLAME_MODEL_PATH,
                     mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
                     fit_config=fit_config,
@@ -421,10 +421,10 @@ def process_scan(
                 )
             )
             mesh_vertices_refit = np.asarray(mesh_refit.vertices)
-            refined_points = np.asarray(refined.points)
-            metrics_refit = surface_error_metrics(mesh_vertices_refit, refined_points)
-            metrics_refit["nose_p95_mm"] = nose_error_p95_mm(landmarks_refit, refined_points)
-            metrics_refit["landmark_rms_mm"] = landmark_rms_mm(landmarks_refit, refined_points)
+            processed_points = np.asarray(processed.points)
+            metrics_refit = surface_error_metrics(mesh_vertices_refit, processed_points)
+            metrics_refit["nose_p95_mm"] = nose_error_p95_mm(landmarks_refit, processed_points)
+            metrics_refit["landmark_rms_mm"] = landmark_rms_mm(landmarks_refit, processed_points)
             metrics_refit["units_inferred"] = unit_result.units_inferred
             metrics_refit["unit_scale_applied"] = unit_result.unit_scale_applied
             metrics_refit["nose_definition_version"] = "mp_v1_radius"
@@ -436,6 +436,45 @@ def process_scan(
             if timed_out_refit:
                 qc_refit.warnings.append("FIT_TIMEOUT")
                 qc_refit.pass_fit = False
+
+            # Step 2 (optional): landmark-based crop only if landmarks are stable.
+            if metrics["landmark_rms_mm"] < 12.0 and metrics["outlier_ratio"] < 0.9:
+                refined = crop_by_landmarks(processed, landmarks)
+                if len(refined.points) >= 800:
+                    mesh_crop, lmk_crop, stage_crop, sparse_crop, timed_crop = fit_flame_mesh(
+                        refined,
+                        flame_model_path=FLAME_MODEL_PATH,
+                        mediapipe_embedding_path=MEDIAPIPE_EMBEDDING_PATH,
+                        fit_config=fit_config,
+                        max_seconds=float(os.getenv("FLAME_FIT_MAX_SECONDS", "60")),
+                        max_iters=int(os.getenv("FLAME_FIT_MAX_ITERS", "200")),
+                        freeze_expression=True,
+                    )
+                    mesh_crop_vertices = np.asarray(mesh_crop.vertices)
+                    refined_points = np.asarray(refined.points)
+                    metrics_crop = surface_error_metrics(mesh_crop_vertices, refined_points)
+                    metrics_crop["nose_p95_mm"] = nose_error_p95_mm(lmk_crop, refined_points)
+                    metrics_crop["landmark_rms_mm"] = landmark_rms_mm(lmk_crop, refined_points)
+                    metrics_crop["units_inferred"] = unit_result.units_inferred
+                    metrics_crop["unit_scale_applied"] = unit_result.unit_scale_applied
+                    metrics_crop["nose_definition_version"] = "mp_v1_radius"
+
+                    qc_crop = build_qc(metrics_crop, fit_config)
+                    if sparse_crop:
+                        qc_crop.warnings.append("POINTCLOUD_SPARSE")
+                        qc_crop.pass_fit = False
+                    if timed_crop:
+                        qc_crop.warnings.append("FIT_TIMEOUT")
+                        qc_crop.pass_fit = False
+
+                    if metrics_crop["p95_mm"] < metrics_refit["p95_mm"]:
+                        mesh_refit = mesh_crop
+                        landmarks_refit = lmk_crop
+                        stage_results_refit = stage_crop
+                        sparse_mode_refit = sparse_crop
+                        timed_out_refit = timed_crop
+                        metrics_refit = metrics_crop
+                        qc_refit = qc_crop
 
             better_refit = metrics_refit["p95_mm"] < metrics["p95_mm"]
             if better_refit:
