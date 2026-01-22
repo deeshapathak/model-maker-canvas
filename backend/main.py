@@ -644,6 +644,7 @@ async def create_scan(
     units: Optional[str] = Query(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
+    logger.info("POST /api/scans - Starting scan creation")
     raw_data = await ply.read()
     if not raw_data:
         raise HTTPException(status_code=400, detail="Empty upload.")
@@ -653,6 +654,7 @@ async def create_scan(
     ply_path = os.path.join(SCAN_DIR, f"{scan_id}.ply")
     with open(ply_path, "wb") as handle:
         handle.write(raw_data)
+    logger.info(f"Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
 
     # Collect RGB frames for Gemini analysis
     gemini_frames = []
@@ -664,17 +666,23 @@ async def create_scan(
         (image_up, "up"),
     ]
     
+    logger.info(f"Scan {scan_id}: Checking for images - front={image_front is not None}, left={image_left is not None}, right={image_right is not None}, down={image_down is not None}, up={image_up is not None}")
+    
     for upload_file, pose_name in frame_mapping:
         if upload_file:
             try:
                 image_bytes = await upload_file.read()
                 if image_bytes:
                     gemini_frames.append((image_bytes, pose_name))
-                    logger.info(f"Scan {scan_id}: Received {pose_name} image ({len(image_bytes)} bytes)")
+                    logger.info(f"Scan {scan_id}: ✅ Received {pose_name} image ({len(image_bytes)} bytes)")
+                else:
+                    logger.warning(f"Scan {scan_id}: ⚠️ {pose_name} image file is empty")
             except Exception as e:
-                logger.warning(f"Scan {scan_id}: Failed to read image_{pose_name}: {e}")
+                logger.warning(f"Scan {scan_id}: ❌ Failed to read image_{pose_name}: {e}")
+        else:
+            logger.debug(f"Scan {scan_id}: No {pose_name} image provided")
     
-    logger.info(f"Scan {scan_id}: Collected {len(gemini_frames)} frames for Gemini analysis")
+    logger.info(f"Scan {scan_id}: 📸 Collected {len(gemini_frames)} frames for Gemini analysis")
 
     update_status(scan_id, "processing")
     background_tasks.add_task(
