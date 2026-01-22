@@ -397,7 +397,7 @@ def process_scan(
         
         # Call Gemini API for shape estimation (if frames provided)
         initial_shape_params = None
-        if gemini_frames and len(gemini_frames) == 5:
+        if gemini_frames and len(gemini_frames) >= 3:  # Accept 3+ frames (front, left, right)
             update_status(scan_id, "processing", stage="gemini")
             gemini_service = get_gemini_service()
             logger.info("Scan %s: Calling Gemini API with %d frames (service enabled: %s)", 
