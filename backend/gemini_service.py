@@ -87,8 +87,8 @@ class GeminiService:
             logger.warning("Gemini service disabled (check API key or SDK installation), skipping API call")
             return None
         
-        if len(frames) != 5:
-            logger.warning(f"Expected 5 frames, got {len(frames)}. Skipping Gemini analysis.")
+        if len(frames) < 3:
+            logger.warning(f"Expected at least 3 frames (front, left, right), got {len(frames)}. Skipping Gemini analysis.")
             return None
         
         logger.info(f"Gemini: Analyzing {len(frames)} frames (sizes: {[len(f[0]) for f in frames]} bytes)")
