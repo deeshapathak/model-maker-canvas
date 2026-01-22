@@ -397,9 +397,12 @@ def process_scan(
         
         # Call Gemini API for shape estimation (if frames provided)
         initial_shape_params = None
+        print(f"[GEMINI CHECK] Scan {scan_id}: gemini_frames={gemini_frames is not None}, len={len(gemini_frames) if gemini_frames else 0}")
+        logger.info(f"Scan {scan_id}: gemini_frames check - exists={gemini_frames is not None}, len={len(gemini_frames) if gemini_frames else 0}")
         if gemini_frames and len(gemini_frames) >= 3:  # Accept 3+ frames (front, left, right)
             update_status(scan_id, "processing", stage="gemini")
             gemini_service = get_gemini_service()
+            print(f"[GEMINI CALL] Scan {scan_id}: Calling Gemini API with {len(gemini_frames)} frames (service enabled: {gemini_service.enabled})")
             logger.info("Scan %s: Calling Gemini API with %d frames (service enabled: %s)", 
                        scan_id, len(gemini_frames), gemini_service.enabled)
             gemini_result = gemini_service.analyze_faces(gemini_frames, timeout_seconds=15.0)
@@ -408,13 +411,17 @@ def process_scan(
                 if initial_shape_params:
                     mean_abs = sum(abs(x) for x in initial_shape_params) / len(initial_shape_params)
                     max_abs = max(abs(x) for x in initial_shape_params)
+                    print(f"[GEMINI SUCCESS] Scan {scan_id}: Using Gemini shape params (mean abs: {mean_abs:.4f}, max abs: {max_abs:.4f})")
                     logger.info("Scan %s: Using Gemini shape params (mean abs: %.4f, max abs: %.4f, first 5: %s)", 
                                scan_id, mean_abs, max_abs, initial_shape_params[:5])
                 else:
+                    print(f"[GEMINI WARNING] Scan {scan_id}: Gemini returned None shape params")
                     logger.warning("Scan %s: Gemini returned None shape params", scan_id)
             else:
+                print(f"[GEMINI WARNING] Scan {scan_id}: Gemini analysis returned None")
                 logger.warning("Scan %s: Gemini analysis returned None (check API key, model availability, or API errors)", scan_id)
         else:
+            print(f"[GEMINI SKIP] Scan {scan_id}: No Gemini frames provided ({len(gemini_frames) if gemini_frames else 0} frames), using zero initialization")
             logger.info("Scan %s: No Gemini frames provided (%s frames), using zero initialization", 
                        scan_id, len(gemini_frames) if gemini_frames else 0)
         
