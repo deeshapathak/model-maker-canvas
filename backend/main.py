@@ -644,6 +644,7 @@ async def create_scan(
     units: Optional[str] = Query(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
+    print(f"[SCAN CREATE] POST /api/scans - Starting scan creation")
     logger.info("POST /api/scans - Starting scan creation")
     raw_data = await ply.read()
     if not raw_data:
@@ -654,6 +655,7 @@ async def create_scan(
     ply_path = os.path.join(SCAN_DIR, f"{scan_id}.ply")
     with open(ply_path, "wb") as handle:
         handle.write(raw_data)
+    print(f"[SCAN CREATE] Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
     logger.info(f"Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
 
     # Collect RGB frames for Gemini analysis
@@ -666,6 +668,7 @@ async def create_scan(
         (image_up, "up"),
     ]
     
+    print(f"[SCAN CREATE] Scan {scan_id}: Checking for images - front={image_front is not None}, left={image_left is not None}, right={image_right is not None}, down={image_down is not None}, up={image_up is not None}")
     logger.info(f"Scan {scan_id}: Checking for images - front={image_front is not None}, left={image_left is not None}, right={image_right is not None}, down={image_down is not None}, up={image_up is not None}")
     
     for upload_file, pose_name in frame_mapping:
@@ -674,14 +677,19 @@ async def create_scan(
                 image_bytes = await upload_file.read()
                 if image_bytes:
                     gemini_frames.append((image_bytes, pose_name))
+                    print(f"[SCAN CREATE] Scan {scan_id}: ✅ Received {pose_name} image ({len(image_bytes)} bytes)")
                     logger.info(f"Scan {scan_id}: ✅ Received {pose_name} image ({len(image_bytes)} bytes)")
                 else:
+                    print(f"[SCAN CREATE] Scan {scan_id}: ⚠️ {pose_name} image file is empty")
                     logger.warning(f"Scan {scan_id}: ⚠️ {pose_name} image file is empty")
             except Exception as e:
+                print(f"[SCAN CREATE] Scan {scan_id}: ❌ Failed to read image_{pose_name}: {e}")
                 logger.warning(f"Scan {scan_id}: ❌ Failed to read image_{pose_name}: {e}")
         else:
+            print(f"[SCAN CREATE] Scan {scan_id}: No {pose_name} image provided")
             logger.debug(f"Scan {scan_id}: No {pose_name} image provided")
     
+    print(f"[SCAN CREATE] Scan {scan_id}: 📸 Collected {len(gemini_frames)} frames for Gemini analysis")
     logger.info(f"Scan {scan_id}: 📸 Collected {len(gemini_frames)} frames for Gemini analysis")
 
     update_status(scan_id, "processing")
