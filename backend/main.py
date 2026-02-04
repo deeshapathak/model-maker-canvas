@@ -70,19 +70,60 @@ def preprocess_point_cloud(
     remove_outliers: bool,
 ) -> o3d.geometry.PointCloud:
     processed = point_cloud
+
+    # Store original colors before any processing
+    original_colors = None
+    original_points = np.asarray(processed.points).copy()
     if processed.has_colors():
-        colors = np.asarray(processed.colors)
-        if colors.size and colors.max() > 1.0:
-            processed.colors = o3d.utility.Vector3dVector(colors / 255.0)
+        original_colors = np.asarray(processed.colors).copy()
+        # Normalize colors to 0-1 range if needed
+        if original_colors.size and original_colors.max() > 1.0:
+            original_colors = original_colors / 255.0
+            processed.colors = o3d.utility.Vector3dVector(original_colors)
+        logger.info(f"Point cloud has colors: shape={original_colors.shape}, range=[{original_colors.min():.3f}, {original_colors.max():.3f}]")
+    else:
+        logger.warning("Point cloud has NO colors - output will be gray")
+
     if remove_outliers:
-        processed, _ = processed.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-        processed, _ = processed.remove_radius_outlier(nb_points=16, radius=0.02)
+        # Get indices of points to keep (Open3D outlier removal may lose colors)
+        _, stat_inlier_idx = processed.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+
+        # Apply statistical outlier mask
+        points_after_stat = original_points[stat_inlier_idx]
+        colors_after_stat = original_colors[stat_inlier_idx] if original_colors is not None else None
+
+        # Create new point cloud with preserved colors
+        processed = o3d.geometry.PointCloud()
+        processed.points = o3d.utility.Vector3dVector(points_after_stat)
+        if colors_after_stat is not None:
+            processed.colors = o3d.utility.Vector3dVector(colors_after_stat)
+
+        # Now do radius outlier removal
+        _, radius_inlier_idx = processed.remove_radius_outlier(nb_points=16, radius=0.02)
+
+        # Apply radius outlier mask
+        points_final = points_after_stat[radius_inlier_idx]
+        colors_final = colors_after_stat[radius_inlier_idx] if colors_after_stat is not None else None
+
+        # Create final point cloud with preserved colors
+        processed = o3d.geometry.PointCloud()
+        processed.points = o3d.utility.Vector3dVector(points_final)
+        if colors_final is not None:
+            processed.colors = o3d.utility.Vector3dVector(colors_final)
+            logger.info(f"Colors preserved after outlier removal: {len(colors_final)} vertices")
 
     if processed.is_empty():
         raise HTTPException(
             status_code=400,
             detail="Point cloud is empty after outlier removal.",
         )
+
+    # Verify colors are still present
+    if processed.has_colors():
+        final_colors = np.asarray(processed.colors)
+        logger.info(f"Final point cloud colors: shape={final_colors.shape}, range=[{final_colors.min():.3f}, {final_colors.max():.3f}]")
+    else:
+        logger.warning("Colors were LOST during preprocessing!")
 
     processed.estimate_normals(
         search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=30)

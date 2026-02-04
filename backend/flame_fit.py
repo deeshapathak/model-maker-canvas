@@ -90,19 +90,28 @@ def transfer_vertex_colors(
     point_cloud: o3d.geometry.PointCloud,
     k_neighbors: int = 5,
 ) -> np.ndarray:
+    """Transfer vertex colors from point cloud to mesh vertices using nearest neighbor interpolation."""
     if not point_cloud.has_colors():
+        logger.warning("transfer_vertex_colors: Point cloud has NO colors - using default gray (0.85)")
         return np.full((mesh_vertices.shape[0], 3), 0.85, dtype=np.float32)
 
     cloud_points = np.asarray(point_cloud.points)
     cloud_colors = np.asarray(point_cloud.colors)
+
     if cloud_points.size == 0 or cloud_colors.size == 0:
+        logger.warning("transfer_vertex_colors: Empty points or colors array - using default gray")
         return np.full((mesh_vertices.shape[0], 3), 0.85, dtype=np.float32)
+
+    logger.info(f"transfer_vertex_colors: Transferring colors from {len(cloud_points)} cloud points to {len(mesh_vertices)} mesh vertices")
+    logger.info(f"transfer_vertex_colors: Cloud colors range: [{cloud_colors.min():.3f}, {cloud_colors.max():.3f}]")
 
     kdtree = o3d.geometry.KDTreeFlann(point_cloud)
     colors = np.zeros((mesh_vertices.shape[0], 3), dtype=np.float32)
     for i, vertex in enumerate(mesh_vertices):
         _, idx, _ = kdtree.search_knn_vector_3d(vertex, k_neighbors)
         colors[i] = cloud_colors[idx].mean(axis=0)
+
+    logger.info(f"transfer_vertex_colors: Result colors range: [{colors.min():.3f}, {colors.max():.3f}]")
     return colors
 
 
