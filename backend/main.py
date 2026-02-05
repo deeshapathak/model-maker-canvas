@@ -797,6 +797,19 @@ async def create_scan(
         handle.write(raw_data)
     print(f"[SCAN CREATE] Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
     logger.info(f"Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
+        # Diagnostic: inspect PLY header and first few vertices for color properties
+        try:
+            header_bytes, rest = raw_data.split(b'end_header', 1)
+            header_text = header_bytes.decode(errors='ignore')
+            vertex_lines = rest.splitlines()[1:6]  # skip the end_header line
+            logger.info("PLY header lines:\n%s", "\n".join(header_text.splitlines()))
+            logger.info("First 5 vertex lines: %s", vertex_lines)
+            if any(prop in header_text for prop in ["property uchar red", "property uchar green", "property uchar blue", "property uchar r", "property uchar g", "property uchar b"]):
+                logger.info("Color properties detected in PLY header")
+            else:
+                logger.info("No color properties detected in PLY header")
+        except Exception as e:
+            logger.warning(f"PLY diagnostic failed: {e}")
 
     # Collect RGB frames for Gemini analysis
     # Priority order: front, 3/4 views (45°), profile views (75°), up/down
