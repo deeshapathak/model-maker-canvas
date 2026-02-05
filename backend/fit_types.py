@@ -64,6 +64,11 @@ class FitMetrics(BaseModel):
     units_inferred: Optional[str] = None
     unit_scale_applied: Optional[float] = None
     nose_definition_version: Optional[str] = None
+    # Non-rigid ICP metrics (post-FLAME deformation)
+    nonrigid_mean_mm: Optional[float] = None
+    nonrigid_p95_mm: Optional[float] = None
+    nonrigid_max_mm: Optional[float] = None
+    nonrigid_converged: Optional[bool] = None
 
 
 class FitResult(BaseModel):

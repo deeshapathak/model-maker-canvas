@@ -590,6 +590,85 @@ def process_scan(
                 metrics = metrics_refit
                 qc = qc_refit
 
+        # ─────────────────────────────────────────────────────────────────────
+        # PHASE: Non-Rigid ICP Deformation
+        # Deform FLAME mesh to exactly match scan geometry for accurate likeness
+        # ─────────────────────────────────────────────────────────────────────
+        update_status(scan_id, "processing", stage="nonrigid_deform")
+        nonrigid_result = None
+        flame_base_vertices = None  # Store original FLAME vertices for morphability
+        mesh_displacements = None   # Store per-vertex displacements
+
+        try:
+            from .nonrigid_icp import deform_template_to_scan, NonRigidICPConfig
+
+            nonrigid_config = NonRigidICPConfig(
+                max_iterations=50,
+                stiffness=10.0,
+                landmark_weight=100.0,
+                convergence_threshold=1e-5,
+                max_correspondence_distance=0.02,  # 20mm
+            )
+
+            # Only apply non-rigid ICP if we have a good initial fit
+            if not sparse_mode and not timed_out and metrics.get("p95_mm", 100) < 10:
+                # Capture FLAME base vertices BEFORE deformation (for morphability)
+                flame_base_vertices = np.asarray(mesh.vertices).copy()
+
+                logger.info(f"Scan {scan_id}: Starting non-rigid ICP deformation...")
+                nonrigid_result = deform_template_to_scan(
+                    template_mesh=mesh,
+                    target_cloud=processed,
+                    landmark_pairs=None,  # Could add landmark constraints later
+                    config=nonrigid_config,
+                )
+
+                if nonrigid_result.converged or nonrigid_result.mean_error < 0.005:  # 5mm
+                    # Apply deformation to mesh
+                    mesh.vertices = o3d.utility.Vector3dVector(nonrigid_result.deformed_vertices)
+
+                    # Store displacement vectors for morphability
+                    mesh_displacements = nonrigid_result.displacements
+                    displacement_path = os.path.join(SCAN_DIR, f"{scan_id}_displacements.npy")
+                    np.save(displacement_path, mesh_displacements)
+
+                    logger.info(
+                        f"Scan {scan_id}: Non-rigid ICP complete - "
+                        f"mean_error={nonrigid_result.mean_error*1000:.2f}mm, "
+                        f"p95_error={nonrigid_result.p95_error*1000:.2f}mm, "
+                        f"iterations={nonrigid_result.iterations_used}, "
+                        f"converged={nonrigid_result.converged}"
+                    )
+
+                    # Update metrics with non-rigid results
+                    metrics["nonrigid_mean_mm"] = nonrigid_result.mean_error * 1000
+                    metrics["nonrigid_p95_mm"] = nonrigid_result.p95_error * 1000
+                    metrics["nonrigid_max_mm"] = nonrigid_result.max_error * 1000
+                    metrics["nonrigid_converged"] = nonrigid_result.converged
+                else:
+                    logger.warning(
+                        f"Scan {scan_id}: Non-rigid ICP did not converge well "
+                        f"(mean_error={nonrigid_result.mean_error*1000:.2f}mm), "
+                        f"using FLAME-only mesh"
+                    )
+                    nonrigid_result = None
+                    flame_base_vertices = None  # Don't save if not used
+            else:
+                reason = []
+                if sparse_mode:
+                    reason.append("sparse_mode")
+                if timed_out:
+                    reason.append("timed_out")
+                if metrics.get("p95_mm", 100) >= 10:
+                    reason.append(f"poor_initial_fit(p95={metrics.get('p95_mm', 'N/A')}mm)")
+                logger.info(
+                    f"Scan {scan_id}: Skipping non-rigid ICP ({', '.join(reason)})"
+                )
+        except ImportError as e:
+            logger.warning(f"Scan {scan_id}: Non-rigid ICP module not available: {e}")
+        except Exception as e:
+            logger.warning(f"Scan {scan_id}: Non-rigid ICP failed: {e}, using FLAME-only mesh")
+
         update_status(scan_id, "processing", stage="overlay")
         overlay_meta = None
         try:
@@ -602,7 +681,13 @@ def process_scan(
                 min_points=int(os.getenv("OVERLAY_MIN_POINTS", "10000")),
             )
             if overlay_config.enabled:
-                overlay_pack = build_overlay_pack(unit_result.point_cloud, mesh, overlay_config)
+                overlay_pack = build_overlay_pack(
+                    unit_result.point_cloud,
+                    mesh,
+                    overlay_config,
+                    flame_base_vertices=flame_base_vertices,
+                    mesh_displacements=mesh_displacements,
+                )
                 overlay_meta = write_overlay_pack(SCAN_DIR, scan_id, overlay_pack)
         except Exception as exc:
             logger.warning("Overlay pack build failed for scan %s: %s", scan_id, exc)

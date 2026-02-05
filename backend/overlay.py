@@ -19,6 +19,9 @@ class OverlayPack:
     weights: np.ndarray
     offsets: np.ndarray
     meta: dict
+    # New: for non-rigid ICP morphability support
+    flame_base_positions: np.ndarray = None  # Original FLAME vertex positions
+    mesh_displacements: np.ndarray = None    # Per-mesh-vertex displacement vectors
 
 
 def _as_float32(arr: np.ndarray) -> np.ndarray:
@@ -95,7 +98,9 @@ def _binding_map(points: np.ndarray,
 
 def build_overlay_pack(point_cloud: o3d.geometry.PointCloud,
                        flame_mesh: o3d.geometry.TriangleMesh,
-                       config: OverlayConfig) -> OverlayPack:
+                       config: OverlayConfig,
+                       flame_base_vertices: np.ndarray = None,
+                       mesh_displacements: np.ndarray = None) -> OverlayPack:
     points = _as_float32(np.asarray(point_cloud.points))
     colors = np.asarray(point_cloud.colors)
     if colors.size:
@@ -120,14 +125,23 @@ def build_overlay_pack(point_cloud: o3d.geometry.PointCloud,
             "count": 0,
             "version": config.version,
         }
-        return OverlayPack(points, colors, np.zeros((0, config.knn_k), dtype=np.uint32),
-                           np.zeros((0, config.knn_k), dtype=np.float32),
-                           np.zeros((0, 3), dtype=np.float32),
-                           meta)
+        return OverlayPack(
+            points, colors,
+            np.zeros((0, config.knn_k), dtype=np.uint32),
+            np.zeros((0, config.knn_k), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.float32),
+            meta,
+            flame_base_positions=flame_base_vertices,
+            mesh_displacements=mesh_displacements,
+        )
 
     indices, weights, offsets = _binding_map(points, flame_vertices, config.knn_k, config.epsilon)
     bbox_min = points.min(axis=0)
     bbox_max = points.max(axis=0)
+
+    # Track if non-rigid ICP was used
+    has_nonrigid = mesh_displacements is not None and mesh_displacements.size > 0
+
     meta = {
         "enabled": True,
         "count": int(points.shape[0]),
@@ -136,10 +150,16 @@ def build_overlay_pack(point_cloud: o3d.geometry.PointCloud,
         "version": config.version,
         "max_dist_m": config.max_dist_m,
         "voxel_size": config.voxel_size,
+        "has_nonrigid_displacements": has_nonrigid,
     }
     if points.shape[0] < config.min_points:
         meta["warning"] = "low_point_count"
-    return OverlayPack(points, colors, indices, weights, offsets, meta)
+
+    return OverlayPack(
+        points, colors, indices, weights, offsets, meta,
+        flame_base_positions=flame_base_vertices,
+        mesh_displacements=mesh_displacements,
+    )
 
 
 def write_overlay_pack(scan_dir: str, scan_id: str, pack: OverlayPack) -> dict:
@@ -150,6 +170,8 @@ def write_overlay_pack(scan_dir: str, scan_id: str, pack: OverlayPack) -> dict:
     indices_path = f"{base}_overlay_indices.bin"
     weights_path = f"{base}_overlay_weights.bin"
     offsets_path = f"{base}_overlay_offsets.bin"
+    flame_base_path = f"{base}_overlay_flame_base.bin"
+    mesh_displacements_path = f"{base}_overlay_mesh_displacements.bin"
     meta_path = f"{base}_overlay_meta.json"
 
     pack.points.astype(np.float32).tofile(points_path)
@@ -172,6 +194,18 @@ def write_overlay_pack(scan_dir: str, scan_id: str, pack: OverlayPack) -> dict:
         "weights_dtype": "float32",
         "offsets_dtype": "float32",
     })
+
+    # Save non-rigid ICP displacement data if available
+    if pack.flame_base_positions is not None and pack.flame_base_positions.size > 0:
+        pack.flame_base_positions.astype(np.float32).tofile(flame_base_path)
+        meta["flame_base_bin"] = os.path.basename(flame_base_path)
+        meta["flame_base_dtype"] = "float32"
+        meta["flame_vertex_count"] = int(pack.flame_base_positions.shape[0])
+
+    if pack.mesh_displacements is not None and pack.mesh_displacements.size > 0:
+        pack.mesh_displacements.astype(np.float32).tofile(mesh_displacements_path)
+        meta["mesh_displacements_bin"] = os.path.basename(mesh_displacements_path)
+        meta["mesh_displacements_dtype"] = "float32"
     with open(meta_path, "w", encoding="utf-8") as handle:
         json.dump(meta, handle)
     return meta
