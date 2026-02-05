@@ -1,7 +1,7 @@
 import { useRef, useState, Suspense, useEffect, useMemo } from "react";
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2, Points, BufferAttribute, Uint8BufferAttribute } from "three";
+import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2, Points, BufferAttribute, Uint8BufferAttribute, MeshStandardMaterial, Material } from "three";
 import { API_CONFIG } from "@/config/api";
 import { fetchOverlayPack, updateOverlayPositions } from "@/utils/overlay";
 import type { OverlayPack } from "@/types/overlay";
@@ -65,15 +65,16 @@ const SculptingBrush = ({
 };
 
 // Deformable GLB Model Component with 3D Sculpting
-const ElonMuskModel = ({ 
-  onClick, 
+const ElonMuskModel = ({
+  onClick,
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
   editingArea,
   deformationStrength = 0.1,
   scanId,
-  overlayOpacity = 0.8
-}: { 
+  overlayOpacity = 0.8,
+  meshOpacity = 1.0
+}: {
   onClick: () => void;
   modelPath?: string;
   scale?: [number, number, number];
@@ -81,6 +82,7 @@ const ElonMuskModel = ({
   deformationStrength?: number;
   scanId?: string | null;
   overlayOpacity?: number;
+  meshOpacity?: number;
 }) => {
   const meshRef = useRef<Mesh>(null);
   const overlayRef = useRef<Points>(null);
@@ -244,6 +246,24 @@ const ElonMuskModel = ({
     console.log('Model scene:', clonedScene);
   }, [modelPath, clonedScene]);
 
+  // Apply mesh opacity to dim the FLAME mesh when overlay is more visible
+  useEffect(() => {
+    if (!clonedScene) return;
+
+    clonedScene.traverse((child) => {
+      if (child instanceof Mesh && child.material) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach((mat: Material) => {
+          if (mat instanceof MeshStandardMaterial) {
+            mat.transparent = meshOpacity < 1.0;
+            mat.opacity = meshOpacity;
+            mat.needsUpdate = true;
+          }
+        });
+      }
+    });
+  }, [clonedScene, meshOpacity]);
+
   useEffect(() => {
     if (!scanId) {
       setOverlayReady(false);
@@ -311,7 +331,8 @@ const ElonMuskModel = ({
       {overlayReady && overlayGeometryRef.current && (
         <points ref={overlayRef} geometry={overlayGeometryRef.current}>
           <pointsMaterial
-            size={0.002}
+            size={0.004}
+            sizeAttenuation={true}
             vertexColors
             transparent
             opacity={overlayOpacity}
@@ -328,14 +349,16 @@ interface FaceModelProps {
   deformationStrength?: number;
   scanId?: string | null;
   overlayOpacity?: number;
+  meshOpacity?: number;
 }
 
-export const FaceModel = ({ 
+export const FaceModel = ({
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
   deformationStrength = 0.1,
   scanId = null,
-  overlayOpacity = 0.8
+  overlayOpacity = 0.8,
+  meshOpacity = 1.0
 }: FaceModelProps = {}) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingArea, setEditingArea] = useState<string | null>(null);
@@ -348,16 +371,17 @@ export const FaceModel = ({
 
   return (
     <group>
-      {/* Elon Musk GLB Model with 3D sculpting */}
+      {/* GLB Model with 3D sculpting */}
       <Suspense fallback={<FallbackSphere onClick={() => handleClick('nose')} />}>
-        <ElonMuskModel 
-          onClick={() => handleClick('nose')} 
+        <ElonMuskModel
+          onClick={() => handleClick('nose')}
           modelPath={modelPath}
           scale={scale}
           editingArea={editingArea}
           deformationStrength={deformationStrength}
           scanId={scanId}
           overlayOpacity={overlayOpacity}
+          meshOpacity={meshOpacity}
         />
       </Suspense>
 

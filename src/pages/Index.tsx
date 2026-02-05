@@ -21,7 +21,11 @@ const Index = () => {
   const scanIdFromUrl = searchParams.get('scanId');
   const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
   const isUsingRemoteScan = !!activeModelUrl;
-  const overlayOpacity = qcWarning ? 0.25 : 0.9;
+  // Keep overlay visible even with QC warnings - the overlay shows the ACTUAL scan colors
+  // which is better than the potentially poorly-fit FLAME mesh
+  const overlayOpacity = qcWarning ? 0.95 : 0.9;
+  // Dim the FLAME mesh when QC warnings are present so the overlay is more visible
+  const meshOpacity = qcWarning ? 0.15 : 1.0;
 
   useEffect(() => {
     return () => {
@@ -178,11 +182,12 @@ const Index = () => {
                   </div>
                 </div>
               ) : (
-                <ModelViewer 
+                <ModelViewer
                   modelPath={currentModelPath}
-                  deformationStrength={deformationStrength} 
+                  deformationStrength={deformationStrength}
                   scanId={scanIdFromUrl}
                   overlayOpacity={overlayOpacity}
+                  meshOpacity={meshOpacity}
                 />
               )}
               

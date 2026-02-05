@@ -9,14 +9,16 @@ interface ModelViewerProps {
   deformationStrength?: number;
   scanId?: string | null;
   overlayOpacity?: number;
+  meshOpacity?: number;
 }
 
-export const ModelViewer = ({ 
+export const ModelViewer = ({
   modelPath = '/models/elon-musk.glb',
   scale = [1, 1, 1],
   deformationStrength = 0.1,
   scanId = null,
-  overlayOpacity = 0.8
+  overlayOpacity = 0.8,
+  meshOpacity = 1.0
 }: ModelViewerProps = {}) => {
   return (
     <div className="h-96 lg:h-[500px] bg-gray-50 relative">
@@ -26,16 +28,17 @@ export const ModelViewer = ({
           Click and drag to rotate • Scroll to zoom • Click face areas to reshape
         </div>
       </div>
-      
+
       <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
         <Suspense fallback={null}>
           <Stage environment="city" intensity={0.6}>
-            <FaceModel 
-              modelPath={modelPath} 
-              scale={scale} 
+            <FaceModel
+              modelPath={modelPath}
+              scale={scale}
               deformationStrength={deformationStrength}
               scanId={scanId}
               overlayOpacity={overlayOpacity}
+              meshOpacity={meshOpacity}
             />
           </Stage>
           <Environment preset="studio" />
