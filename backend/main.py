@@ -770,6 +770,9 @@ async def create_scan(
     image_right: Optional[UploadFile] = File(None),
     image_down: Optional[UploadFile] = File(None),
     image_up: Optional[UploadFile] = File(None),
+    # New 3/4 view angles for better multi-view reconstruction
+    image_left_three_quarter: Optional[UploadFile] = File(None),
+    image_right_three_quarter: Optional[UploadFile] = File(None),
     poisson_depth: int = Query(9, ge=4, le=12),
     target_tris: int = Query(60000, ge=1000, le=500000),
     remove_outliers: bool = Query(False),
@@ -792,17 +795,22 @@ async def create_scan(
     logger.info(f"Scan {scan_id}: PLY saved ({len(raw_data)} bytes)")
 
     # Collect RGB frames for Gemini analysis
+    # Priority order: front, 3/4 views (45°), profile views (75°), up/down
     gemini_frames = []
     frame_mapping = [
         (image_front, "front"),
-        (image_left, "left"),
-        (image_right, "right"),
+        (image_left_three_quarter, "left_three_quarter"),  # ~45° left
+        (image_left, "left"),  # ~75° left profile
+        (image_right_three_quarter, "right_three_quarter"),  # ~45° right
+        (image_right, "right"),  # ~75° right profile
         (image_down, "down"),
         (image_up, "up"),
     ]
-    
-    print(f"[SCAN CREATE] Scan {scan_id}: Checking for images - front={image_front is not None}, left={image_left is not None}, right={image_right is not None}, down={image_down is not None}, up={image_up is not None}")
-    logger.info(f"Scan {scan_id}: Checking for images - front={image_front is not None}, left={image_left is not None}, right={image_right is not None}, down={image_down is not None}, up={image_up is not None}")
+
+    # Log which images were received
+    received_images = [name for img, name in frame_mapping if img is not None]
+    print(f"[SCAN CREATE] Scan {scan_id}: Received images: {received_images}")
+    logger.info(f"Scan {scan_id}: Received images: {received_images}")
     
     for upload_file, pose_name in frame_mapping:
         if upload_file:
