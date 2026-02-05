@@ -18,19 +18,20 @@ export async function loadPLY(url: string): Promise<PLYData> {
   const text = await response.text();
   const lines = text.split('\n');
 
-  // Parse header
+  // Parse header and record property names
   let vertexCount = 0;
   let headerEndIndex = 0;
-  let hasColors = false;
+  const propertyNames: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim().toLowerCase();
-
+    const rawLine = lines[i].trim();
+    const line = rawLine.toLowerCase();
     if (line.startsWith('element vertex')) {
-      vertexCount = parseInt(line.split(' ')[2], 10);
-    }
-    if (line.includes('property') && (line.includes('red') || line.includes('green') || line.includes('blue'))) {
-      hasColors = true;
+      vertexCount = parseInt(rawLine.split(/\s+/)[2], 10);
+    } else if (line.startsWith('property')) {
+      const tokens = rawLine.split(/\s+/);
+      const propName = tokens[tokens.length - 1];
+      propertyNames.push(propName);
     }
     if (line === 'end_header') {
       headerEndIndex = i + 1;
@@ -40,6 +41,19 @@ export async function loadPLY(url: string): Promise<PLYData> {
 
   if (vertexCount === 0) {
     throw new Error('Invalid PLY: no vertices found');
+  }
+
+  // Determine property indices and color availability
+  const xIdx = propertyNames.indexOf('x');
+  const yIdx = propertyNames.indexOf('y');
+  const zIdx = propertyNames.indexOf('z');
+  const rIdx = propertyNames.indexOf('red');
+  const gIdx = propertyNames.indexOf('green');
+  const bIdx = propertyNames.indexOf('blue');
+  const hasColors = rIdx !== -1 && gIdx !== -1 && bIdx !== -1;
+
+  if (xIdx < 0 || yIdx < 0 || zIdx < 0) {
+    throw new Error('Invalid PLY: missing x, y, or z property');
   }
 
   // Parse vertices
@@ -54,9 +68,9 @@ export async function loadPLY(url: string): Promise<PLYData> {
     const parts = line.split(/\s+/);
     if (parts.length < 3) continue;
 
-    const x = parseFloat(parts[0]);
-    const y = parseFloat(parts[1]);
-    const z = parseFloat(parts[2]);
+    const x = parseFloat(parts[xIdx]);
+    const y = parseFloat(parts[yIdx]);
+    const z = parseFloat(parts[zIdx]);
 
     if (isNaN(x) || isNaN(y) || isNaN(z)) continue;
 
@@ -64,11 +78,10 @@ export async function loadPLY(url: string): Promise<PLYData> {
     positions[validCount * 3 + 1] = y;
     positions[validCount * 3 + 2] = z;
 
-    // Parse colors if present (format: x y z r g b)
-    if (hasColors && parts.length >= 6) {
-      colors[validCount * 3] = parseInt(parts[3], 10) || 200;
-      colors[validCount * 3 + 1] = parseInt(parts[4], 10) || 180;
-      colors[validCount * 3 + 2] = parseInt(parts[5], 10) || 160;
+    if (hasColors) {
+      colors[validCount * 3] = parseInt(parts[rIdx], 10) || 200;
+      colors[validCount * 3 + 1] = parseInt(parts[gIdx], 10) || 180;
+      colors[validCount * 3 + 2] = parseInt(parts[bIdx], 10) || 160;
     } else {
       // Default skin-ish color
       colors[validCount * 3] = 220;
