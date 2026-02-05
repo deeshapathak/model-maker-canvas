@@ -266,16 +266,24 @@ const ElonMuskModel = ({
 
   useEffect(() => {
     if (!scanId) {
+      console.log("Overlay: No scanId provided");
       setOverlayReady(false);
       return;
     }
     const overlayUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_OVERLAY(encodeURIComponent(scanId))}`;
+    console.log("Overlay: Fetching from", overlayUrl);
     let cancelled = false;
     fetchOverlayPack(overlayUrl)
       .then((pack) => {
         if (cancelled) {
+          console.log("Overlay: Fetch cancelled");
           return;
         }
+        console.log("Overlay: Loaded successfully", {
+          pointCount: pack.points.length / 3,
+          colorCount: pack.colors.length / 3,
+          meta: pack.meta
+        });
         overlayPackRef.current = pack;
         const positions = new Float32Array(pack.points);
         overlayPositionsRef.current = positions;
@@ -286,9 +294,10 @@ const ElonMuskModel = ({
         geometry.setAttribute("color", colorAttr);
         overlayGeometryRef.current = geometry;
         setOverlayReady(true);
+        console.log("Overlay: Ready to render");
       })
       .catch((err) => {
-        console.warn("Overlay load failed:", err);
+        console.error("Overlay load failed:", err);
         setOverlayReady(false);
       });
     return () => {
@@ -331,11 +340,12 @@ const ElonMuskModel = ({
       {overlayReady && overlayGeometryRef.current && (
         <points ref={overlayRef} geometry={overlayGeometryRef.current}>
           <pointsMaterial
-            size={0.005}
+            size={0.006}
             sizeAttenuation={true}
             vertexColors
             transparent
             opacity={overlayOpacity}
+            depthWrite={false}
           />
         </points>
       )}
