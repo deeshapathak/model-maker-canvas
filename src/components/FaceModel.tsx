@@ -331,7 +331,7 @@ const ElonMuskModel = ({
       {overlayReady && overlayGeometryRef.current && (
         <points ref={overlayRef} geometry={overlayGeometryRef.current}>
           <pointsMaterial
-            size={0.004}
+            size={0.005}
             sizeAttenuation={true}
             vertexColors
             transparent

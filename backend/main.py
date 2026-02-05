@@ -603,15 +603,16 @@ def process_scan(
             from .nonrigid_icp import deform_template_to_scan, NonRigidICPConfig
 
             nonrigid_config = NonRigidICPConfig(
-                max_iterations=50,
-                stiffness=10.0,
-                landmark_weight=100.0,
+                max_iterations=80,        # More iterations to converge
+                stiffness=5.0,            # Lower stiffness = more deformation allowed
+                landmark_weight=50.0,     # Less landmark constraint = more freedom
                 convergence_threshold=1e-5,
-                max_correspondence_distance=0.02,  # 20mm
+                max_correspondence_distance=0.03,  # 30mm - wider search for correspondences
             )
 
-            # Only apply non-rigid ICP if we have a good initial fit
-            if not sparse_mode and not timed_out and metrics.get("p95_mm", 100) < 10:
+            # Apply non-rigid ICP even with mediocre initial fits (threshold raised to 20mm)
+            # This helps when FLAME fitting produces a generic template look
+            if not sparse_mode and not timed_out and metrics.get("p95_mm", 100) < 20:
                 # Capture FLAME base vertices BEFORE deformation (for morphability)
                 flame_base_vertices = np.asarray(mesh.vertices).copy()
 
@@ -623,7 +624,7 @@ def process_scan(
                     config=nonrigid_config,
                 )
 
-                if nonrigid_result.converged or nonrigid_result.mean_error < 0.005:  # 5mm
+                if nonrigid_result.converged or nonrigid_result.mean_error < 0.010:  # 10mm - more lenient
                     # Apply deformation to mesh
                     mesh.vertices = o3d.utility.Vector3dVector(nonrigid_result.deformed_vertices)
 

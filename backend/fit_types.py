@@ -10,12 +10,12 @@ class FitConfig(BaseModel):
     iters_expr: int = 120
     iters_shape: int = 160
 
-    w_landmark: float = 2.0
-    w_chamfer: float = 1.0
-    w_point2plane: float = 0.5
-    w_prior_shape: float = 0.005
-    w_prior_expr: float = 0.005
-    w_prior_jaw: float = 0.02
+    w_landmark: float = 1.5          # Reduced: less strict on landmarks
+    w_chamfer: float = 2.0            # Increased: fit the actual scan data more
+    w_point2plane: float = 1.0        # Increased: better surface alignment
+    w_prior_shape: float = 0.001      # Reduced: allow more deviation from mean face
+    w_prior_expr: float = 0.001       # Reduced: allow more expression variation
+    w_prior_jaw: float = 0.01         # Reduced: allow more jaw movement
 
     huber_delta: float = 0.01
 

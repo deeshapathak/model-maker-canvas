@@ -21,11 +21,12 @@ const Index = () => {
   const scanIdFromUrl = searchParams.get('scanId');
   const currentModelPath = activeModelUrl || '/models/elon-musk.glb';
   const isUsingRemoteScan = !!activeModelUrl;
-  // Keep overlay visible even with QC warnings - the overlay shows the ACTUAL scan colors
-  // which is better than the potentially poorly-fit FLAME mesh
-  const overlayOpacity = qcWarning ? 0.95 : 0.9;
-  // Dim the FLAME mesh when QC warnings are present so the overlay is more visible
-  const meshOpacity = qcWarning ? 0.15 : 1.0;
+  // The overlay shows the ACTUAL scan colors/geometry from the point cloud
+  // Make it always prominent since FLAME mesh can look too template-like
+  const overlayOpacity = qcWarning ? 0.98 : 0.95;
+  // Always blend the FLAME mesh with some transparency so overlay shows through
+  // When QC warnings exist, dim it much more
+  const meshOpacity = qcWarning ? 0.1 : 0.6;
 
   useEffect(() => {
     return () => {
