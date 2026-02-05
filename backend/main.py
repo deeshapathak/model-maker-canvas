@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .fit_types import FitConfig, FitMetrics, FitResult, OverlayConfig
-from .flame_fit import fit_flame_mesh
+from .flame_fit import fit_flame_mesh, transfer_vertex_colors
 from .gemini_service import get_gemini_service
 from .metrics import landmark_rms_mm, nose_error_p95_mm, surface_error_metrics
 from .overlay import build_overlay_pack, write_overlay_pack
@@ -749,6 +749,9 @@ async def ply_to_glb(
         processed = preprocess_point_cloud(point_cloud, remove_outliers=remove_outliers)
         mesh = poisson_reconstruct(processed, poisson_depth=poisson_depth)
         mesh = decimate_and_finalize(mesh, target_tris=target_tris)
+        # Transfer vertex colors from the point cloud to mesh
+        colors = transfer_vertex_colors(np.asarray(mesh.vertices), processed)
+        mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
         glb_bytes = mesh_to_glb(mesh)
     except HTTPException:
         raise
