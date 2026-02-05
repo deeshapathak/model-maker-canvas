@@ -4,6 +4,7 @@ import { useGLTF } from "@react-three/drei";
 import { Mesh, TextureLoader, Vector3, BufferGeometry, Float32BufferAttribute, Raycaster, Vector2, Points, BufferAttribute, Uint8BufferAttribute, MeshStandardMaterial, Material } from "three";
 import { API_CONFIG } from "@/config/api";
 import { fetchOverlayPack, updateOverlayPositions } from "@/utils/overlay";
+import { loadPLY, type PLYData } from "@/utils/plyLoader";
 import type { OverlayPack } from "@/types/overlay";
 
 // Fallback component when GLB is loading or fails
@@ -86,14 +87,17 @@ const ElonMuskModel = ({
 }) => {
   const meshRef = useRef<Mesh>(null);
   const overlayRef = useRef<Points>(null);
+  const plyPointsRef = useRef<Points>(null);
   const overlayPackRef = useRef<OverlayPack | null>(null);
   const overlayPositionsRef = useRef<Float32Array | null>(null);
   const overlayGeometryRef = useRef<BufferGeometry | null>(null);
+  const plyGeometryRef = useRef<BufferGeometry | null>(null);
   const originalPositionsRef = useRef<Float32Array | null>(null);
   const [isDeforming, setIsDeforming] = useState(false);
   const [isSculpting, setIsSculpting] = useState(false);
   const [brushPosition, setBrushPosition] = useState<Vector3>(new Vector3());
   const [overlayReady, setOverlayReady] = useState(false);
+  const [plyReady, setPlyReady] = useState(false);
   const { camera, gl } = useThree();
 
   // Use useGLTF directly and let Suspense handle errors
@@ -264,62 +268,103 @@ const ElonMuskModel = ({
     });
   }, [clonedScene, meshOpacity]);
 
+  // Load PLY point cloud directly - this is the actual scan data
   useEffect(() => {
     if (!scanId) {
-      console.log("Overlay: No scanId provided");
-      setOverlayReady(false);
+      console.log("PLY: No scanId provided");
+      setPlyReady(false);
       return;
     }
-    const overlayUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_OVERLAY(encodeURIComponent(scanId))}`;
-    console.log("Overlay: Fetching from", overlayUrl);
+    const plyUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_SCAN_PLY(encodeURIComponent(scanId))}`;
+    console.log("PLY: Fetching from", plyUrl);
     let cancelled = false;
-    fetchOverlayPack(overlayUrl)
-      .then((pack) => {
-        if (cancelled) {
-          console.log("Overlay: Fetch cancelled");
-          return;
-        }
-        console.log("Overlay: Loaded successfully", {
-          pointCount: pack.points.length / 3,
-          colorCount: pack.colors.length / 3,
-          meta: pack.meta
+
+    loadPLY(plyUrl)
+      .then((plyData) => {
+        if (cancelled) return;
+        console.log("PLY: Loaded successfully", {
+          pointCount: plyData.pointCount,
         });
-        overlayPackRef.current = pack;
-        const positions = new Float32Array(pack.points);
-        overlayPositionsRef.current = positions;
+
         const geometry = new BufferGeometry();
-        geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-        const colorAttr = new Uint8BufferAttribute(pack.colors, 3);
+        geometry.setAttribute("position", new Float32BufferAttribute(plyData.positions, 3));
+        const colorAttr = new Uint8BufferAttribute(plyData.colors, 3);
         colorAttr.normalized = true;
         geometry.setAttribute("color", colorAttr);
-        overlayGeometryRef.current = geometry;
-        setOverlayReady(true);
-        console.log("Overlay: Ready to render");
+
+        // Center the point cloud
+        geometry.computeBoundingBox();
+        const center = geometry.boundingBox?.getCenter(new Vector3()) || new Vector3();
+        geometry.translate(-center.x, -center.y, -center.z);
+
+        plyGeometryRef.current = geometry;
+        setPlyReady(true);
+        console.log("PLY: Ready to render");
       })
       .catch((err) => {
-        console.error("Overlay load failed:", err);
-        setOverlayReady(false);
+        console.error("PLY load failed, trying overlay:", err);
+        setPlyReady(false);
+
+        // Fallback to overlay system
+        const overlayUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.GET_OVERLAY(encodeURIComponent(scanId))}`;
+        fetchOverlayPack(overlayUrl)
+          .then((pack) => {
+            if (cancelled) return;
+            console.log("Overlay: Loaded as fallback", { pointCount: pack.points.length / 3 });
+            overlayPackRef.current = pack;
+            const positions = new Float32Array(pack.points);
+            overlayPositionsRef.current = positions;
+            const geometry = new BufferGeometry();
+            geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+            const colorAttr = new Uint8BufferAttribute(pack.colors, 3);
+            colorAttr.normalized = true;
+            geometry.setAttribute("color", colorAttr);
+            overlayGeometryRef.current = geometry;
+            setOverlayReady(true);
+          })
+          .catch((overlayErr) => {
+            console.error("Both PLY and overlay failed:", overlayErr);
+          });
       });
+
     return () => {
       cancelled = true;
     };
   }, [scanId]);
 
-  // If model failed to load, show fallback with deformation
+  // If we have PLY data, show ONLY the point cloud (not the FLAME mesh)
+  // This gives the user their actual scan appearance
+  if (plyReady && plyGeometryRef.current) {
+    return (
+      <group>
+        <points ref={plyPointsRef} geometry={plyGeometryRef.current} scale={10}>
+          <pointsMaterial
+            size={0.015}
+            sizeAttenuation={true}
+            vertexColors
+            transparent={false}
+          />
+        </points>
+      </group>
+    );
+  }
+
+  // If model failed to load and no PLY, show fallback
   if (!clonedScene) {
     return (
-      <FallbackSphere 
-        onClick={onClick} 
+      <FallbackSphere
+        onClick={onClick}
         editingArea={editingArea}
         deformationStrength={deformationStrength}
       />
     );
   }
 
+  // Show FLAME mesh with overlay if available
   return (
     <group>
-      <primitive 
-        object={clonedScene} 
+      <primitive
+        object={clonedScene}
         position={[0, 0, 0]}
         scale={scale}
         onClick={onClick}
@@ -328,9 +373,9 @@ const ElonMuskModel = ({
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      
+
       {/* Sculpting brush indicator */}
-      <SculptingBrush 
+      <SculptingBrush
         position={brushPosition}
         strength={deformationStrength}
         radius={0.1}

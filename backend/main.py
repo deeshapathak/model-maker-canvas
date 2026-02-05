@@ -903,6 +903,20 @@ def get_scan(scan_id: str) -> FileResponse:
     )
 
 
+@app.get("/api/scans/{scan_id}.ply")
+def get_scan_ply(scan_id: str) -> FileResponse:
+    """Serve the raw PLY point cloud file."""
+    ply_path = os.path.join(SCAN_DIR, f"{scan_id}.ply")
+    if not os.path.exists(ply_path):
+        raise HTTPException(status_code=404, detail="PLY file not found.")
+    return FileResponse(
+        ply_path,
+        media_type="application/octet-stream",
+        filename="scan.ply",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/scans/{scan_id}/overlay")
 def get_overlay(scan_id: str, request: Request) -> JSONResponse:
     meta_path = overlay_meta_path(scan_id)
