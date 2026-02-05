@@ -802,6 +802,28 @@ async def create_scan(
         header_bytes, rest = raw_data.split(b'end_header', 1)
         header_text = header_bytes.decode(errors='ignore')
         vertex_lines = rest.splitlines()[1:6]  # skip the end_header line
+        # Log and print for diagnostic visibility
+        header_lines = header_text.splitlines()
+        logger.info("PLY header lines:\n%s", "\n".join(header_lines))
+        print("PLY header lines:")
+        for line in header_lines[:40]:
+            print(line)
+        logger.info("First 5 vertex lines: %s", vertex_lines)
+        print("First 5 vertex lines:", vertex_lines)
+        has_color = any(prop in header_text for prop in ["property uchar red", "property uchar green", "property uchar blue", "property uchar r", "property uchar g", "property uchar b"])
+        if has_color:
+            logger.info("Color properties detected in PLY header")
+            print("Color properties detected in PLY header")
+        else:
+            logger.info("No color properties detected in PLY header")
+            print("No color properties detected in PLY header")
+    except Exception as e:
+        logger.warning(f"PLY diagnostic failed: {e}")
+        print(f"PLY diagnostic failed: {e}")
+    try:
+        header_bytes, rest = raw_data.split(b'end_header', 1)
+        header_text = header_bytes.decode(errors='ignore')
+        vertex_lines = rest.splitlines()[1:6]  # skip the end_header line
         logger.info("PLY header lines:\n%s", "\n".join(header_text.splitlines()))
         logger.info("First 5 vertex lines: %s", vertex_lines)
         if any(prop in header_text for prop in ["property uchar red", "property uchar green", "property uchar blue", "property uchar r", "property uchar g", "property uchar b"]):
